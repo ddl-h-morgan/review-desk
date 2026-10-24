@@ -255,7 +255,7 @@ def _packet_html(pid: str, packet: Packet, drafts: bool, layout: str) -> str:
   (or <code>review-desk open</code>); this page reconnects on its own.
 </div>
 <div class="notice" id="layout-changed" role="status" hidden>
-  The packet's manifest changed (items, titles or facts). <a href="">Reload</a> to see it; your notes are already saved.
+  The packet's manifest changed (a title, fact or intro was edited, or an item removed). <a href="">Reload</a> to see it; your notes are already saved.
 </div>
 <div class="bar" id="bar">
   <a class="back" href="/">← All packets</a>

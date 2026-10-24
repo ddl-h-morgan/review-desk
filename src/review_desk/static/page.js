@@ -284,7 +284,7 @@
     queues[id] = (queues[id] || Promise.resolve()).then(run);
   }
 
-  for (const card of cards) {
+  function bindCard(card) {
     const id = card.dataset.id;
     for (const b of card.querySelectorAll("button[data-decision]")) {
       listen(b, "click", () => put(id, { decision: b.dataset.decision }));
@@ -300,7 +300,9 @@
       clearTimeout(t);
       if ((state[id]?.note || "") !== note.value) put(id, { note: note.value });
     });
+    listen(note, "input", updateFloat);
   }
+  cards.forEach(bindCard);
 
   // Floating note: while a note field has focus (and its cursor), its box floats at the bottom of the window if that
   // card's draft is on screen and the note's regular place is not. The slot holds the box's height so nothing jumps.
@@ -332,7 +334,6 @@
     }
   }
   for (const ev of ["scroll", "resize", "focusin", "focusout", "toggle"]) listen(window, ev, updateFloat, { capture: true, passive: true });
-  for (const note of document.querySelectorAll("[data-note]")) listen(note, "input", updateFloat);
 
   // Live drafts: when an agent edits a draft file, swap that one draft's body in place. Nothing else on the page is
   // touched (notes being typed, open drafts, scroll position, the help dialog), so there is never a reload.
@@ -349,6 +350,56 @@
     el.src = `/static/page.js?v=${v}`;
     document.head.append(el); // runs the new copy, which disposes this one first
   }
+  // The manifest changed. Items added to it are inserted into the open page (nothing else on the page is touched), and
+  // the page's own version moves on. Anything else that changed (a title or fact, a removed item, the intro) can't be
+  // applied without a reload, which would lose open drafts, so that still gets the "Reload" prompt.
+  let handledLayout = null, layoutBusy = false;
+  async function syncLayout(version) {
+    if (layoutBusy) return;
+    layoutBusy = true;
+    try {
+      const r = await fetch(location.pathname, { cache: "no-store" });
+      if (!r.ok || dead) return;
+      const doc = new DOMParser().parseFromString(await r.text(), "text/html");
+      if (doc.body.dataset.pid !== pid) return;
+      const fresh = [...doc.querySelectorAll(".card")];
+      const live = new Map(cards.map(c => [c.dataset.id, c]));
+      const freshIds = new Set(fresh.map(c => c.dataset.id));
+      const frame = d => ["h1", ".intro", ".evidence"].map(sel => d.querySelector(`main ${sel}`)?.innerHTML ?? "").join("\u0000");
+      const face = c => ["h2", ".kind", ".facts"].map(sel => c.querySelector(sel)?.innerHTML ?? "").join("\u0000");
+      let onlyAdded = cards.every(c => freshIds.has(c.dataset.id)) && frame(doc) === frame(document)
+        && fresh.every(c => !live.has(c.dataset.id) || face(c) === face(live.get(c.dataset.id)));
+      let prev = document.querySelector("main .intro");
+      const ordered = [];
+      for (const f of fresh) {
+        let card = live.get(f.dataset.id);
+        if (!card) {
+          card = document.importNode(f, true);
+          card.classList.add("new-item");
+          prev.after(card);
+          bindCard(card);
+          for (const el of card.querySelectorAll(".decide button, textarea")) el.disabled = !connected;
+        }
+        ordered.push(card);
+        prev = card;
+      }
+      if (ordered.length !== cards.length || ordered.some((c, i) => c !== cards[i])) {
+        cards.splice(0, cards.length, ...ordered, ...cards.filter(c => !freshIds.has(c.dataset.id)));
+      }
+      cards.forEach((c, i) => {
+        c.querySelector(".num").textContent = i + 1;
+        c.querySelector(".decide").setAttribute("aria-label", `Decision for item ${i + 1}`);
+      });
+      document.querySelector("#bar strong").textContent = `${cards.length} items`;
+      historyJson = changesJson = ""; // so the new cards get their earlier notes and change lines
+      render();
+      refreshHistory(); refreshChanges();
+      handledLayout = version;
+      if (onlyAdded) document.body.dataset.layoutVersion = doc.body.dataset.layoutVersion;
+      else document.getElementById("layout-changed").hidden = false;
+    } catch { /* the next tick tries again */ }
+    finally { layoutBusy = false; }
+  }
   async function refreshDrafts() {
     if (draftsBusy) return;
     draftsBusy = true;
@@ -357,7 +408,7 @@
       if (!r.ok || dead) return;
       // The manifest (items, titles, facts) changed: offer a reload rather than doing one, which would lose open drafts.
       const layout = r.headers.get("X-Layout-Version");
-      if (layout && layout !== document.body.dataset.layoutVersion) document.getElementById("layout-changed").hidden = false;
+      if (layout && layout !== document.body.dataset.layoutVersion && layout !== handledLayout) await syncLayout(layout);
       // apply page.css / page.js changes in place, never a reload (that would lose notes, open
       // drafts and scroll). The stylesheet is swapped; a changed script is loaded and replaces this running copy.
       const sv = r.headers.get("X-Static-Version");

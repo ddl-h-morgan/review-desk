@@ -228,6 +228,8 @@ ignored.
 
 `decision` is `approve`, `revise`, `drop`, or `""` (cleared, counts as pending). This shape is a stable contract, so
 existing decisions files keep working. Ids that leave the manifest keep their records and show up as `orphans` in `status`.
+Items you add to the manifest appear on an open page within a few seconds, in place (notes, open drafts and scroll are untouched). A
+change to an existing item's title or facts, a removed item, or an edited intro still shows a "Reload" prompt.
 
 **Don't rename an item id once review has started**: the old decision becomes an orphan and the item shows as pending.
 

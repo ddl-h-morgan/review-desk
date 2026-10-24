@@ -446,6 +446,24 @@ def test_layout_version_matches_the_page_and_script_prompts_instead_of_reloading
     assert "location.reload" not in js  # the user chooses when to reload; a reload would lose open drafts and notes
 
 
+def test_script_adds_new_items_in_place_and_prompts_only_for_other_manifest_changes(desk):
+    """No browser in the tests, so this pins the pieces of page.js that make it behave (checked by hand in Chromium)."""
+    js = desk.get("/static/page.js")[2].decode()
+    # new items come from the server's own page, parsed and imported, never from innerHTML
+    assert "new DOMParser().parseFromString(" in js and "document.importNode(f, true)" in js
+    assert "bindCard(card);" in js  # a new card must save decisions and notes like the others
+    # a title, fact, kind, the intro, or a removed item is not applied in place: the reload prompt stays for those
+    assert 'cards.every(c => freshIds.has(c.dataset.id))' in js
+    assert 'frame(doc) === frame(document)' in js
+    assert 'face(c) === face(live.get(c.dataset.id))' in js
+    assert 'if (onlyAdded) document.body.dataset.layoutVersion = doc.body.dataset.layoutVersion;' in js
+    assert 'else document.getElementById("layout-changed").hidden = false;' in js
+    # numbers and the count follow the new order, and a version is fetched once, not every poll
+    assert 'c.querySelector(".num").textContent = i + 1;' in js and "`${cards.length} items`" in js
+    assert "layout !== handledLayout" in js
+    assert "location.reload" not in js
+
+
 def test_history_endpoint_serves_archived_notes(desk):
     assert json.loads(desk.get(f"/api/p/{desk.pid}/history")[2]) == {}
     desk.put_item(desk.pid, "first-draft", {"decision": "revise", "note": "shorter"})

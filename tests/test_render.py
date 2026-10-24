@@ -206,6 +206,17 @@ def test_toolbar_shows_git_sha(monkeypatch):
     assert render._build_tag() == ""
 
 
+def _fake_checkout(monkeypatch, tmp_path):
+    """Run render._git_sha from a fake review-desk checkout, so the test doesn't depend on this tree having a .git."""
+    from review_desk import render
+    root = tmp_path / "checkout"
+    (root / "src" / "review_desk").mkdir(parents=True, exist_ok=True)
+    (root / "bin").mkdir(exist_ok=True)
+    (root / ".git").mkdir(exist_ok=True)
+    (root / "bin" / "review-desk").write_text("")
+    monkeypatch.setattr(render, "__file__", str(root / "src" / "review_desk" / "render.py"))
+
+
 def _stub_git(monkeypatch, result):
     from review_desk import render
     calls = []
@@ -219,15 +230,17 @@ def _stub_git(monkeypatch, result):
     return render, calls
 
 
-def test_git_sha_reads_short_sha_without_inherited_git_env(monkeypatch):
+def test_git_sha_reads_short_sha_without_inherited_git_env(monkeypatch, tmp_path):
     monkeypatch.setenv("GIT_DIR", "/elsewhere/.git")
+    _fake_checkout(monkeypatch, tmp_path)
     render, calls = _stub_git(monkeypatch, "abc1234\n")
     assert render._git_sha() == "abc1234"
     cmd, kw = calls[0]
     assert cmd[:2] == ["git", "-C"] and "GIT_DIR" not in kw["env"]
 
 
-def test_git_sha_empty_on_junk_or_failure(monkeypatch):
+def test_git_sha_empty_on_junk_or_failure(monkeypatch, tmp_path):
+    _fake_checkout(monkeypatch, tmp_path)
     for result in ("not a sha\n", "", OSError("no git"), subprocess.TimeoutExpired("git", 5)):
         render, _ = _stub_git(monkeypatch, result)
         assert render._git_sha() == ""

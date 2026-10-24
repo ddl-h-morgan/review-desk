@@ -13,7 +13,7 @@ SRC = pathlib.Path(__file__).resolve().parent.parent
 _tmp = pathlib.Path(tempfile.mkdtemp(prefix="mutation-check-"))
 atexit.register(shutil.rmtree, _tmp, True)  # also on an assertion or Ctrl-C
 R = _tmp / "repo"
-shutil.copytree(SRC, R, ignore=shutil.ignore_patterns(".git", ".venv", "__pycache__", ".pytest_cache"))
+shutil.copytree(SRC, R, symlinks=True, ignore=shutil.ignore_patterns(".git", ".venv", "__pycache__", ".pytest_cache"))
 S = "src/review_desk/"
 MUTANTS = [
  ("host check off", S+"server.py", 'if len(hosts) != 1 or hosts[0].strip() not in self._allowed_hosts():', 'if False:'),
@@ -30,6 +30,13 @@ MUTANTS = [
  ("done packets untagged", S+"render.py", "' done' if c['pending'] == 0 else ''", "''"),
  ("layout version ignores manifest", S+"render.py", 'return draft_version(_packet_html(pid, packet, False, ""))', 'return "v"'),
  ("layout version includes draft text", S+"render.py", 'draft_html(packet, it) if drafts else ""', 'draft_html(packet, it)'),
+ ("new items not bound", S+"static/page.js", "bindCard(card);\n          for", "for"),
+ ("any manifest change is applied in place", S+"static/page.js", "if (onlyAdded) document.body.dataset.layoutVersion = doc.body.dataset.layoutVersion;\n      else document.getElementById", "document.body.dataset.layoutVersion = doc.body.dataset.layoutVersion;\n      if (false) document.getElementById"),
+ ("title edits applied in place", S+"static/page.js", "face(c) === face(live.get(c.dataset.id))", "true"),
+ ("removed items applied in place", S+"static/page.js", "cards.every(c => freshIds.has(c.dataset.id)) &&", "true &&"),
+ ("intro edits applied in place", S+"static/page.js", "frame(doc) === frame(document)", "true"),
+ ("new items numbered wrongly", S+"static/page.js", 'c.querySelector(".num").textContent = i + 1;', 'c.querySelector(".num").textContent = c.querySelector(".num").textContent;'),
+ ("layout refetched every poll", S+"static/page.js", "layout !== document.body.dataset.layoutVersion && layout !== handledLayout", "layout !== document.body.dataset.layoutVersion"),
  ("layout header dropped", S+"server.py", '{"X-Layout-Version": render.layout_version(pid, p), "X-Static', '{"X-Static'),
  ("reviewed cards not hidden", S+"static/page.css", 'body.hide-reviewed .card:not(.just-decided)[data-decision="approve"],', 'body.hide-reviewed .card:not(.just-decided)[data-decision="x"],'),
  ("revise hidden too", S+"static/page.css", 'body.hide-reviewed .card:not(.just-decided)[data-decision="approve"],', 'body.hide-reviewed .card[data-decision="revise"],\nbody.hide-reviewed .card:not(.just-decided)[data-decision="approve"],'),
