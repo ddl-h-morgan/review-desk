@@ -335,6 +335,28 @@
   }
   for (const ev of ["scroll", "resize", "focusin", "focusout", "toggle"]) listen(window, ev, updateFloat, { capture: true, passive: true });
 
+  // Item links: /p/<packet>/#<item-id> (see `review-desk url --item`). The target card is shown even if "Hide reviewed"
+  // would hide it (the same hold a just-decided card gets), scrolled to below the sticky bar, marked, and focused. An id
+  // that isn't a card is ignored (the page stays at the top); one that isn't there yet is tried again when items arrive.
+  let linkedId = null;
+  function revealLinked(scroll = true) {
+    const id = decodeURIComponent(location.hash.slice(1));
+    const card = id && cards.find(c => c.dataset.id === id);
+    if (!card) { linkedId = id || null; return; }
+    linkedId = null;
+    card.classList.add("just-decided");
+    card.classList.remove("linked");
+    void card.offsetWidth; // restart the highlight if the same link is followed again
+    card.classList.add("linked");
+    card.style.scrollMarginTop = document.getElementById("bar").offsetHeight + 12 + "px";
+    card.tabIndex = -1;
+    card.focus({ preventScroll: true });
+    if (scroll) card.scrollIntoView({ block: "start" });
+  }
+  listen(window, "hashchange", () => revealLinked());
+  if (!hot) revealLinked(); // a hot swap must not pull the page back to the link
+  else { const id = decodeURIComponent(location.hash.slice(1)); if (id && !cards.some(c => c.dataset.id === id)) linkedId = id; }
+
   // Live drafts: when an agent edits a draft file, swap that one draft's body in place. Nothing else on the page is
   // touched (notes being typed, open drafts, scroll position, the help dialog), so there is never a reload.
   let draftsBusy = false, staticVersion = null;
@@ -391,6 +413,7 @@
         c.querySelector(".decide").setAttribute("aria-label", `Decision for item ${i + 1}`);
       });
       document.querySelector("#bar strong").textContent = `${cards.length} items`;
+      if (linkedId) revealLinked(); // a linked item that has just arrived
       historyJson = changesJson = ""; // so the new cards get their earlier notes and change lines
       render();
       refreshHistory(); refreshChanges();

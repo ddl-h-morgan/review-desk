@@ -109,7 +109,8 @@ All commands are non-interactive and exit 0 on success, 1 on error (message on s
 | `status [--json]` | Without a dir: one line per registered packet, plus how many have pending items. |
 | `serve [--port N] [--background] [--reload] [--share]` | Runs the desk in the foreground, or with `--background` starts it detached (if not already up), prints the URL and exits. `--share` allows [sharing on your local network](#sharing-on-your-local-network), `--share-mdns` (with it) also accepts this machine's `.local` name. Log: `~/.local/state/review-desk/desk-<port>.log`. |
 | `share [status\|on\|off] [--json] [--port N]` | Needs a desk running with `--share`. `status` (the default) shows whether the network window is open, its time left and URLs; `on` opens a 4-hour window, or resets a running one to a full 4 hours; `off` closes it. |
-| `open [<dir>] [--port N] [--browser NAME] [--no-browser]` | Opens the index, or a packet, in a browser (see [Browser](#browser)), starting the desk first if needed. Registers `<dir>` if it isn't yet. `--no-browser` only prints the URL. |
+| `open [<dir>] [--item ID] [--port N] [--browser NAME] [--no-browser]` | Opens the index, or a packet, in a browser (see [Browser](#browser)), starting the desk first if needed. Registers `<dir>` if it isn't yet. `--no-browser` only prints the URL. `--item ID` links to one card (see `url`). |
+| `url <dir> [--item ID] [--port N]` | Prints the packet's URL (registering it if needed) and opens nothing. `--item ID` adds `#ID`: the page scrolls to that card below the bar, shows it even if "Hide reviewed" would hide it, highlights it, and focuses it. The id must be in the manifest. An item added to the manifest after the page opened is scrolled to when it arrives. |
 
 The registry lives at `~/.local/state/review-desk/packets.json` (`$REVIEW_DESK_STATE` overrides the directory).
 
@@ -239,7 +240,8 @@ change to an existing item's title or facts, a removed item, or an edited intro 
    template). One item per thing the reviewer must decide. Put your recommendation on the card, and anything that
    changes the decision (overlapping work, risks) in `facts`.
 2. **`review-desk add <dir>`**, then **`review-desk open <dir>`**, and tell the reviewer it's waiting (the URL is
-   printed). Don't ask for the decisions in chat; move on.
+   printed). Don't ask for the decisions in chat; move on. To point at one item (say, after a revision),
+   give `review-desk url <dir> --item <id>` instead.
 3. **Later, in any session: `review-desk status <dir> --json`.** Act only on what's there:
    - `approve`: do it (the click is the approval for that item, but follow your project's own rules for logging it);
    - `revise`: edit the draft per the `note`. The open page swaps the new text in within a few seconds, without a reload. Then clear the mark and note with `PUT {"decision": "", "note": "", "ifDecision": "revise", "ifNote": "<the note you acted on>"}` (see the skill; a 409 means the reviewer decided again or added to the note, so leave it). The desk keeps the old note in `review-history.json` and shows it on the card under "Earlier notes". Say which items changed; they get re-decided;

@@ -13,7 +13,7 @@ import webbrowser
 from pathlib import Path
 
 from .decisions import DecisionsError
-from .manifest import MANIFEST, SCAFFOLD, ManifestError
+from .manifest import MANIFEST, SCAFFOLD, ManifestError, load
 from .registry import Registry, RegistryError, state_dir
 from .summary import summarize_dir, summarize_entry, text_report
 
@@ -232,18 +232,33 @@ def cmd_serve(a, reg: Registry):
         srv.server_close()
 
 
-def cmd_open(a, reg: Registry):
+def _packet_url(a, reg: Registry) -> str:
+    """The desk URL for a packet directory (registering it if needed), or the desk's own for none; --item adds a
+    fragment that makes the open page scroll to that card (the id must be in the manifest)."""
     url = base_url(a.port)
-    if a.dir:
-        e = reg.find(a.dir)
-        if e is None:
-            e = reg.add(a.dir)
-            print(f"registered {e.id}  {e.path}", file=sys.stderr)
-        url += f"p/{e.id}/"
+    if not a.dir:
+        if a.item:
+            raise CliError("--item needs a packet directory")
+        return url
+    if a.item and a.item not in {i.id for i in load(a.dir).items}:
+        raise CliError(f"no item {a.item!r} in {Path(a.dir).expanduser().resolve() / MANIFEST}")
+    e = reg.find(a.dir)
+    if e is None:
+        e = reg.add(a.dir)
+        print(f"registered {e.id}  {e.path}", file=sys.stderr)
+    return url + f"p/{e.id}/" + (f"#{a.item}" if a.item else "")
+
+
+def cmd_open(a, reg: Registry):
+    url = _packet_url(a, reg)
     if not a.no_browser:
         ensure_running(a.port)
         open_browser(url, a.browser or os.environ.get("REVIEW_DESK_BROWSER") or None)
     print(url)
+
+
+def cmd_url(a, reg: Registry):
+    print(_packet_url(a, reg))
 
 
 def cmd_share(a, reg: Registry):
@@ -322,10 +337,14 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("open", help="open the desk or a packet in a browser; starts the desk if needed; "
                                     "registers the packet if it isn't yet")
     s.add_argument("dir", nargs="?"); port_arg(s)
+    s.add_argument("--item", metavar="ID", help="scroll the page to this item (a link to one card)")
     s.add_argument("--browser", metavar="NAME", help="browser to use (default $REVIEW_DESK_BROWSER, else the system "
                                                      "default); on macOS an app name, opened in a new window")
     s.add_argument("--no-browser", action="store_true", help="only print the URL (don't start the desk or a browser)")
     s.set_defaults(fn=cmd_open)
+    s = sub.add_parser("url", help="print a packet's URL (registering it if needed) without opening anything; "
+                                   "--item ID links to one card")
+    s.add_argument("dir"); s.add_argument("--item", metavar="ID"); port_arg(s); s.set_defaults(fn=cmd_url)
     s = sub.add_parser("share", help="show or change sharing with the local network (the desk must run with --share): "
                                      "`on` opens a 4-hour window, or resets a running one to a full 4 hours; `off` closes it")
     s.add_argument("action", nargs="?", choices=["status", "on", "off"], default="status")

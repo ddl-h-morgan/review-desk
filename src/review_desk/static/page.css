@@ -141,3 +141,5 @@ body:not(.show-done) .packet.done { display: none; }
 @media (prefers-reduced-motion: no-preference) { .card { transition: border-color 0.15s; } }
 .card.new-item { animation: new-item 2.5s ease-out; }
 @keyframes new-item { from { box-shadow: 0 0 0 3px var(--approve); } to { box-shadow: 0 0 0 3px transparent; } }
+.card.linked { animation: linked 3s ease-out; }
+@keyframes linked { from { box-shadow: 0 0 0 3px var(--revise); } to { box-shadow: 0 0 0 3px transparent; } }

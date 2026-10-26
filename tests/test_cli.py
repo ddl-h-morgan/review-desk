@@ -220,3 +220,37 @@ def test_wait_gives_up_after_three_failed_polls_but_survives_one(capsys, packet,
     monkeypatch.setattr("review_desk.cli.time.sleep", sleep)
     code, _, err = run(capsys, "wait", str(packet), "--start", "1")
     assert code == 1 and "gave up after 3 failed polls" in err and len(n) == 5
+
+
+def test_url_prints_the_packet_url_and_registers(capsys, packet, state_dir):
+    code, out, err = run(capsys, "url", str(packet), "--port", "8123")
+    assert code == 0 and "registered" in err
+    url = out.strip()
+    assert url.startswith("http://127.0.0.1:8123/p/") and url.endswith("/") and "#" not in url
+
+
+def test_url_item_adds_a_fragment_for_that_card(capsys, packet, state_dir):
+    base = run(capsys, "url", str(packet))[1].strip()
+    code, out, _ = run(capsys, "url", str(packet), "--item", "second-draft")
+    assert code == 0 and out.strip() == base + "#second-draft"
+
+
+def test_url_item_must_be_in_the_manifest_and_needs_a_packet(capsys, packet, state_dir):
+    code, _, err = run(capsys, "url", str(packet), "--item", "nope")
+    assert code == 1 and "no item 'nope'" in err
+    code, _, err = run(capsys, "open", "--no-browser", "--item", "first-draft")
+    assert code == 1 and "--item needs a packet directory" in err
+
+
+def test_open_item_opens_the_item_link(capsys, packet, state_dir, monkeypatch):
+    opened = []
+    monkeypatch.setattr("review_desk.cli.ensure_running", lambda *a, **k: None)
+    monkeypatch.setattr("review_desk.cli.open_browser", lambda url, browser=None: opened.append(url))
+    code, out, _ = run(capsys, "open", str(packet), "--item", "first-draft")
+    assert code == 0 and opened == [out.strip()] and out.strip().endswith("/#first-draft")
+    assert run(capsys, "open", str(packet), "--no-browser", "--item", "first-draft")[1].strip() == out.strip()
+    assert len(opened) == 1  # --no-browser opens nothing
+
+
+def test_open_without_item_has_no_fragment(capsys, packet, state_dir):
+    assert "#" not in run(capsys, "open", str(packet), "--no-browser")[1]

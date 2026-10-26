@@ -54,7 +54,9 @@ down.
    in `[items.facts]`. Delete `example-draft.md` and its item if you don't use them.
 3. **Register it:** `review-desk add <dir>`. This validates the manifest; fix any error it prints and run it again.
 4. **Open it:** `review-desk open <dir>`. It prints the packet URL (`http://127.0.0.1:<port>/p/<id>/`). Use
-   `--no-browser` if you only want the URL.
+   `--no-browser` if you only want the URL. To point the human at one item (after a revise round, or a question about
+   it), give `review-desk url <dir> --item <id>`: the link scrolls to that card, shows it even if reviewed items are
+   hidden, and highlights it.
 5. **Tell the human** the URL and what the packet holds, then move on. Don't ask for the decisions in chat.
 6. **Later, read the decisions:** `review-desk status <dir> --json`. Each item has `decision` (`approve`, `revise`,
    `drop`, or `null` for pending) and `note`; `undecided` lists the pending ids, and `orphans` lists decided ids no longer

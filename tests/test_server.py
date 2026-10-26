@@ -464,6 +464,19 @@ def test_script_adds_new_items_in_place_and_prompts_only_for_other_manifest_chan
     assert "location.reload" not in js
 
 
+def test_script_follows_item_links(desk):
+    """No browser in the tests, so this pins the pieces of page.js behind #<item-id> links (checked by hand in Chromium)."""
+    js = desk.get("/static/page.js")[2].decode()
+    assert "const card = id && cards.find(c => c.dataset.id === id);" in js  # only a card id is ever acted on, never used as a selector
+    assert 'card.classList.add("just-decided");\n    card.classList.remove("linked");' in js  # shown even when "Hide reviewed" would hide it
+    assert 'document.getElementById("bar").offsetHeight + 12' in js  # lands below the sticky bar
+    assert "card.focus({ preventScroll: true });" in js and 'card.classList.add("linked");' in js
+    assert 'listen(window, "hashchange", () => revealLinked());' in js
+    assert "if (!hot) revealLinked();" in js  # a hot swap must not pull the page back to the link
+    assert "if (linkedId) revealLinked();" in js  # an item that arrives after the link was opened
+    assert ".card.linked" in desk.get("/static/page.css")[2].decode()
+
+
 def test_history_endpoint_serves_archived_notes(desk):
     assert json.loads(desk.get(f"/api/p/{desk.pid}/history")[2]) == {}
     desk.put_item(desk.pid, "first-draft", {"decision": "revise", "note": "shorter"})
