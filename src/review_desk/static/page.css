@@ -95,7 +95,7 @@ details.draft summary { cursor: pointer; color: var(--accent); }
 /* A card whose open draft has a table grows, centered on the page, to fit the table (up to the window width, then the table
    scrolls). Its other content keeps the normal column width, so prose doesn't stretch the card. */
 .card:has(details.draft[open] .table-wrap) { width: max-content; min-width: 100%; max-width: calc(100vw - 32px);
-  position: relative; left: 50%; transform: translateX(-50%); }
+  justify-self: center; } /* no transform: it would become the containing block of the card's fixed floating note */
 .card:has(details.draft[open] .table-wrap) > :not(details.draft),
 .card:has(details.draft[open] .table-wrap) .draft-body > :not(.table-wrap) { max-width: 828px; }
 .draft-body h1 { font-size: 1.15rem; } .draft-body h2 { font-size: 1rem; } .draft-body h3 { font-size: 0.95rem; }
