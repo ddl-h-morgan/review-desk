@@ -90,7 +90,14 @@ details.earlier time { display: block; color: var(--muted); font-size: 0.9em; }
 .saved { margin: 0; font-size: 0.8em; color: var(--muted); min-height: 1.2em; }
 details.draft { min-width: 0; } /* a grid item: without this a wide code line widens the whole page */
 details.draft summary { cursor: pointer; color: var(--accent); }
-.draft-body { border-top: 1px solid var(--line); margin-top: 8px; padding-top: 8px; overflow-x: auto; }
+.draft-body { border-top: 1px solid var(--line); margin-top: 8px; padding-top: 8px; }
+.table-wrap { overflow-x: auto; }
+/* A card whose open draft has a table grows, centered on the page, to fit the table (up to the window width, then the table
+   scrolls). Its other content keeps the normal column width, so prose doesn't stretch the card. */
+.card:has(details.draft[open] .table-wrap) { width: max-content; min-width: 100%; max-width: calc(100vw - 32px);
+  position: relative; left: 50%; transform: translateX(-50%); }
+.card:has(details.draft[open] .table-wrap) > :not(details.draft),
+.card:has(details.draft[open] .table-wrap) .draft-body > :not(.table-wrap) { max-width: 828px; }
 .draft-body h1 { font-size: 1.15rem; } .draft-body h2 { font-size: 1rem; } .draft-body h3 { font-size: 0.95rem; }
 .draft-body table, .evidence table { border-collapse: collapse; font-size: 0.88em; }
 .draft-body td, .draft-body th, .evidence td, .evidence th { border: 1px solid var(--line); padding: 4px 6px; vertical-align: top; }

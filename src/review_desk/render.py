@@ -55,6 +55,18 @@ _MD.validateLink = lambda url: True  # every URL is checked by _url_filter, whic
 _MD.core.ruler.push("url_filter", _url_filter)
 
 
+def _table_rule(open_: bool):
+    def rule(tokens, idx, options, env):
+        tag = _MD.renderer.renderToken(tokens, idx, options, env)
+        return '<div class="table-wrap">' + tag if open_ else tag + "</div>"
+    return rule
+
+
+# Each table sits in a wrapper that CSS lets break out of the centered column when it is wider than the column.
+_MD.renderer.rules["table_open"] = _table_rule(True)
+_MD.renderer.rules["table_close"] = _table_rule(False)
+
+
 def md(text: str) -> str:
     return _MD.render(text or "")
 

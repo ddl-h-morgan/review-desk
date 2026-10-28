@@ -61,6 +61,11 @@ def test_table():
     assert "<table>" in h and "<th>a</th>" in h and "<td>2</td>" in h
 
 
+def test_table_is_wrapped_so_css_can_center_it():
+    h = md("| a | b |\n|---|---|\n| 1 | 2 |")
+    assert h.startswith('<div class="table-wrap"><table>') and h.rstrip().endswith("</table>\n</div>"), h
+
+
 def test_table_right_after_a_line_of_text():
     h = md("Results:\n| a | b |\n|---|---|\n| 1 | 2 |")
     assert "<table>" in h and "<td>1</td>" in h, h
@@ -130,7 +135,7 @@ RAW_HTML = [
 @pytest.mark.parametrize("src", RAW_HTML)
 def test_raw_html_is_escaped(src):
     for h in (md(src), md_inline(src)):
-        assert {t for t, _ in tags(h)} <= {"p", "ul", "li", "table", "thead", "tbody", "tr", "th", "td"}, h
+        assert {t for t, _ in tags(h)} <= {"p", "ul", "li", "div", "table", "thead", "tbody", "tr", "th", "td"}, h
         assert "&lt;" in h
 
 
