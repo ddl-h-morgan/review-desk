@@ -165,14 +165,20 @@ def _wait_snapshot(directory) -> str:
 
 
 def cmd_wait(a, reg: Registry):
-    """Read-only: poll the packet's decisions until a decision or note changes (or an item is added or removed)."""
+    """Read-only: poll the packet's decisions until a decision or note changes (or an item is added or removed).
+
+    With --settle N, a change only counts once the packet has then been still for N seconds, so a note being typed
+    (the page autosaves it) fires once, after the reviewer pauses. Time is counted in slept seconds."""
     for name in ("start", "max"):
         if getattr(a, name) < 1:
             raise CliError(f"--{name} must be whole seconds >= 1")
-    base = _wait_snapshot(a.dir)  # a bad packet fails here, at once
-    delay, fails = a.start, 0
+    if a.settle < 0:
+        raise CliError("--settle must be whole seconds >= 0")
+    base = last = _wait_snapshot(a.dir)  # a bad packet fails here, at once
+    delay, fails, quiet = a.start, 0, 0
     while True:
-        time.sleep(delay)
+        step = delay if last == base else min(delay, a.settle)  # while settling, poll at least every settle seconds
+        time.sleep(step)
         try:
             cur = _wait_snapshot(a.dir)
             fails = 0
@@ -180,12 +186,17 @@ def cmd_wait(a, reg: Registry):
             fails += 1
             if fails >= 3:
                 raise CliError(f"gave up after 3 failed polls: {e}") from None
-            cur = base
-        if cur != base:
+            cur = last
+        if cur != last:
+            last, quiet = cur, 0
+        elif last != base:
+            quiet += step
+        if last != base and quiet >= a.settle:
             print("CHANGED")
-            print(cur)
+            print(last)
             return
-        delay = min(delay * 2, a.max)
+        if last == base:
+            delay = min(delay * 2, a.max)
 
 
 def cmd_new(a, reg: Registry):
@@ -315,6 +326,9 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("dir")
     s.add_argument("--start", type=int, default=int(os.environ.get("POLL_START") or 15), help="first poll delay, seconds (15)")
     s.add_argument("--max", type=int, default=int(os.environ.get("POLL_MAX") or 600), help="longest poll delay, seconds (600)")
+    s.add_argument("--settle", type=int, default=0,
+                   help="report a change only after the packet has been still this many seconds, e.g. 30, so a note being "
+                        "typed fires once (0: at once)")
     s.set_defaults(fn=cmd_wait)
     s = sub.add_parser("new", help="scaffold a review.toml in a directory")
     s.add_argument("dir"); s.add_argument("--title"); s.set_defaults(fn=cmd_new)

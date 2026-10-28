@@ -79,13 +79,17 @@ off from 15 s to 10 min (`--start` and `--max`, in seconds; or `POLL_START` and 
 through, run it again. It exits 1 if the packet stays unreadable (no `review.toml`, or an invalid manifest or decisions
 file) for 3 polls in a row. (`poll-packet <dir>`, if installed, is the same command.)
 
+The page autosaves a note while it is typed, so a bare `wait` can fire several times for one note, or on a half-written
+one. Pass `--settle 30` to report a change only after the packet has been still for 30 s: a note being typed fires once,
+after the reviewer pauses (a change that is undone in the meantime doesn't fire). Use it on an active review.
+
 `wait` exits on the first change (or if killed), so loop around it: after each exit read `review-desk status <dir> --json`,
 act on decided items only, then start `wait` again in the background. Never end a turn without one armed while items are
 pending. On an active review pass `--start 5 --max 120` (5 s to 120 s between polls; the default backs off to 10 min), and
 wrap it so a killed or empty exit re-arms, run as a background command:
 
 ```sh
-until out=$(review-desk wait --start 5 --max 120 <dir> 2>&1) && [ -n "$out" ]; do sleep 5; done; echo "$out"
+until out=$(review-desk wait --start 5 --max 120 --settle 30 <dir> 2>&1) && [ -n "$out" ]; do sleep 5; done; echo "$out"
 ```
 
 Don't stop waits with `pkill -f "review-desk wait"` or any pattern kill: other sessions wait on other packets and it kills

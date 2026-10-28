@@ -16,6 +16,8 @@ R = _tmp / "repo"
 shutil.copytree(SRC, R, symlinks=True, ignore=shutil.ignore_patterns(".git", ".venv", "__pycache__", ".pytest_cache"))
 S = "src/review_desk/"
 MUTANTS = [
+ ("wait settle ignored", S+"cli.py", "if last != base and quiet >= a.settle:", "if last != base:"),
+ ("wait settle not restarted by a new edit", S+"cli.py", "last, quiet = cur, 0", "last = cur"),
  ("host check off", S+"server.py", 'if len(hosts) != 1 or hosts[0].strip() not in self._allowed_hosts():', 'if False:'),
  ("host allows any port", S+"server.py", 'return {f"127.0.0.1:{self.port}", f"localhost:{self.port}"}', 'return {f"127.0.0.1:{self.port}", f"localhost:{self.port}", "127.0.0.1", "127.0.0.1:1"}'),
  ("custom header off", S+"server.py", 'if self.headers.get("X-Review-Desk") != "1":', 'if False:'),

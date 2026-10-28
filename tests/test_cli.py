@@ -199,11 +199,45 @@ def test_wait_notices_a_changed_note_and_a_new_item(capsys, packet, state_dir, m
     assert run(capsys, "wait", str(packet), "--start", "1")[0] == 0
 
 
+def test_wait_settle_fires_once_after_a_note_stops_changing(capsys, packet, state_dir, monkeypatch):
+    sleeps = []
+    notes = {2: "h", 3: "he", 5: "hel"}  # a short pause (one quiet poll) mid-note restarts nothing, then still
+
+    def sleep(n):
+        sleeps.append(n)
+        assert len(sleeps) < 30, "never fired"
+        if len(sleeps) in notes:
+            merge_item(packet, "first-draft", {"decision": "", "note": notes[len(sleeps)]})
+    monkeypatch.setattr("review_desk.cli.time.sleep", sleep)
+    code, out, _ = run(capsys, "wait", str(packet), "--start", "1", "--settle", "3")
+    assert code == 0 and out.count("CHANGED") == 1
+    assert ["first-draft", None, "hel"] in json.loads(out.splitlines()[1])  # the finished note, not the first keystroke
+    assert len(sleeps) == 7  # last edit seen on poll 5, then two 2 s quiet polls (4 s >= 3)
+
+
+def test_wait_settle_ignores_a_change_that_is_undone(capsys, packet, state_dir, monkeypatch):
+    sleeps = []
+
+    def sleep(n):
+        sleeps.append(n)
+        if len(sleeps) == 1:
+            merge_item(packet, "first-draft", {"decision": "", "note": "oops"})
+        elif len(sleeps) == 2:
+            merge_item(packet, "first-draft", {"decision": "", "note": ""})
+        elif len(sleeps) == 8:
+            merge_item(packet, "first-draft", {"decision": "drop", "note": ""})
+        assert len(sleeps) < 30
+    monkeypatch.setattr("review_desk.cli.time.sleep", sleep)
+    code, out, _ = run(capsys, "wait", str(packet), "--start", "1", "--settle", "2")
+    assert code == 0 and ["first-draft", "drop", ""] in json.loads(out.splitlines()[1])
+
+
 def test_wait_rejects_bad_delays_and_bad_packets(capsys, packet, tmp_path, state_dir, monkeypatch):
     monkeypatch.setattr("review_desk.cli.time.sleep", lambda n: pytest.fail("must not sleep"))
     for bad in ("0", "-1"):
         assert run(capsys, "wait", str(packet), "--start", bad)[0] == 1
     assert run(capsys, "wait", str(packet), "--max", "0")[0] == 1
+    assert run(capsys, "wait", str(packet), "--settle", "-1")[0] == 1
     assert run(capsys, "wait", str(tmp_path))[0] == 1  # no review.toml
 
 
