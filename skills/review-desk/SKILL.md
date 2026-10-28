@@ -79,6 +79,18 @@ off from 15 s to 10 min (`--start` and `--max`, in seconds; or `POLL_START` and 
 through, run it again. It exits 1 if the packet stays unreadable (no `review.toml`, or an invalid manifest or decisions
 file) for 3 polls in a row. (`poll-packet <dir>`, if installed, is the same command.)
 
+`wait` exits on the first change (or if killed), so loop around it: after each exit read `review-desk status <dir> --json`,
+act on decided items only, then start `wait` again in the background. Never end a turn without one armed while items are
+pending. On an active review pass `--start 5 --max 120` (5 s to 120 s between polls; the default backs off to 10 min), and
+wrap it so a killed or empty exit re-arms, run as a background command:
+
+```sh
+until out=$(review-desk wait --start 5 --max 120 <dir> 2>&1) && [ -n "$out" ]; do sleep 5; done; echo "$out"
+```
+
+Don't stop waits with `pkill -f "review-desk wait"` or any pattern kill: other sessions wait on other packets and it kills
+those too. Stop only your own background task by its task id (or the specific PID you started).
+
 ## Clear a revise mark and its note
 
 After you have edited a revised item's draft, put it back to pending and clear its note. This is the one write you make to the desk's API,
@@ -148,4 +160,5 @@ Don't rename an item's `id` once review has started: its decision becomes an orp
   mark and its note after you have revised that item (above). It exists for the page.
 - Don't treat a pending, dropped or revise-marked item as approved.
 - Don't open a share window on your own initiative, and don't leave one open after the human is done.
+- Don't pattern-kill review-desk waits (`pkill -f`); stop only your own task by id or PID.
 - Don't move or rename a registered packet directory; run `review-desk remove <dir>` and `add` it again if you must.

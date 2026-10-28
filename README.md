@@ -253,6 +253,12 @@ change to an existing item's title or facts, a removed item, or an edited intro 
    the agent is re-invoked, then reads `status --json` as above. It polls with a backoff from 15 s to 10 min
    (`--start`/`--max` seconds, or `POLL_START`/`POLL_MAX`); it exits 1 if the packet is unreadable for 3 polls in a
    row. `bin/poll-packet <dir>` is the same thing for a symlink on your PATH.
+
+   `wait` exits on the first change (or if killed), so loop: after each exit read `status --json`, act on decided
+   items only, then start `wait` again in the background. For an active review use `--start 5 --max 120`, and wrap it
+   in `until out=$(review-desk wait --start 5 --max 120 <dir> 2>&1) && [ -n "$out" ]; do sleep 5; done; echo "$out"`
+   so a killed or empty exit re-arms. Never `pkill -f "review-desk wait"`: it kills other sessions' waits; stop only
+   your own task by id or PID.
 4. Never write `review-decisions.json` yourself. Decisions are the reviewer's. (The desk's PUT API exists for the page.)
 
 ## Install the skill
