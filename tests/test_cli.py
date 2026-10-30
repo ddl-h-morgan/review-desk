@@ -1,4 +1,5 @@
 import json
+import os
 
 import pytest
 
@@ -230,6 +231,87 @@ def test_wait_settle_ignores_a_change_that_is_undone(capsys, packet, state_dir, 
     monkeypatch.setattr("review_desk.cli.time.sleep", sleep)
     code, out, _ = run(capsys, "wait", str(packet), "--start", "1", "--settle", "2")
     assert code == 0 and ["first-draft", "drop", ""] in json.loads(out.splitlines()[1])
+
+
+def _wait_with(capsys, packet, monkeypatch, steps, *args):
+    """Run `wait`; steps = {poll number: callable} done during that poll's sleep. Returns (sleeps, output lines)."""
+    sleeps = []
+
+    def sleep(n):
+        sleeps.append(n)
+        assert len(sleeps) < 20, "never fired"
+        if len(sleeps) in steps:
+            steps[len(sleeps)]()
+    monkeypatch.setattr("review_desk.cli.time.sleep", sleep)
+    code, out, _ = run(capsys, "wait", str(packet), "--start", "1", "--max", "1", *args)
+    assert code == 0
+    return sleeps, out.splitlines()
+
+
+def test_wait_reports_what_changed(capsys, packet, state_dir, monkeypatch):
+    merge_item(packet, "second-draft", {"decision": "revise", "note": "old words"})
+    _, lines = _wait_with(capsys, packet, monkeypatch, {1: lambda: (
+        merge_item(packet, "first-draft", {"decision": "approve", "note": "ship it\nsoon"}),
+        merge_item(packet, "second-draft", {"decision": "", "note": ""}))})
+    assert lines[0] == "CHANGED" and ["first-draft", "approve", "ship it\nsoon"] in json.loads(lines[1])
+    assert "first-draft: decision pending -> approve" in lines
+    assert "first-draft: note added: ship it / soon" in lines
+    assert "second-draft: decision revise -> pending" in lines and "second-draft: note cleared" in lines
+    assert not any("EDIT" in ln for ln in lines)
+
+
+def test_wait_says_when_each_decision_was_made_and_the_draft_last_edited(capsys, packet, state_dir, monkeypatch):
+    def decide():
+        merge_item(packet, "first-draft", {"decision": "approve", "note": ""})
+    _, lines = _wait_with(capsys, packet, monkeypatch, {1: decide})
+    stamp = json.loads((packet / "review-decisions.json").read_text())["first-draft"]["updatedAt"]
+    row = next(ln for ln in lines if "draft last edited" in ln)
+    assert f"decided {stamp}" in row and "(decision postdates the draft)" in row
+    # a draft edited after the decision is called out
+    os.utime(packet / "first-draft.md", (4102444800, 4102444800))  # year 2100
+    (packet / "first-draft.md").write_text("# First\n\nedited later")
+    os.utime(packet / "first-draft.md", (4102444800, 4102444800))
+    _, lines = _wait_with(capsys, packet, monkeypatch, {1: lambda: merge_item(packet, "first-draft", {"note": "n"})})
+    assert any("DRAFT EDITED AFTER THE DECISION" in ln for ln in lines)
+
+
+def test_wait_ignores_reordering_and_edits_by_default_but_reports_them(capsys, packet, state_dir, monkeypatch):
+    def reorder():
+        text = (packet / "review.toml").read_text()
+        head, first, second = text.split("[[items]]")
+        (packet / "review.toml").write_text(head + "[[items]]" + second + "[[items]]" + first)
+    sleeps, lines = _wait_with(capsys, packet, monkeypatch, {
+        1: reorder,
+        2: lambda: (packet / "first-draft.md").write_text("# First\n\nrewritten"),
+        3: lambda: (packet / "review.toml").write_text(
+            (packet / "review.toml").read_text().replace('"Send it"', '"Send it, shorter"')),
+        4: lambda: merge_item(packet, "second-draft", {"decision": "drop", "note": ""})})
+    assert len(sleeps) == 4  # woke on the decision only
+    assert "second-draft: decision pending -> drop" in lines
+    assert "first-draft: EDIT draft file changed (not a decision)" in lines
+    assert "second-draft: EDIT manifest entry changed (not a decision)" in lines
+
+
+def test_wait_on_edits_wakes_on_a_draft_or_manifest_edit(capsys, packet, state_dir, monkeypatch):
+    sleeps, lines = _wait_with(capsys, packet, monkeypatch,
+                               {2: lambda: (packet / "first-draft.md").write_text("# First\n\nrewritten")}, "--on-edits")
+    assert len(sleeps) == 2 and lines[0] == "CHANGED"
+    assert lines[2:] == ["first-draft: EDIT draft file changed (not a decision)"]
+    # a touch with the same text is not an edit
+    sleeps, _ = _wait_with(capsys, packet, monkeypatch, {
+        1: lambda: (packet / "first-draft.md").write_text((packet / "first-draft.md").read_text()),
+        3: lambda: (packet / "review.toml").write_text(
+            (packet / "review.toml").read_text().replace('"First draft"', '"First draft v2"'))}, "--on-edits")
+    assert len(sleeps) == 3
+
+
+def test_wait_reports_items_added_and_removed(capsys, packet, state_dir, monkeypatch):
+    text = (packet / "review.toml").read_text()
+    head, first, second = text.split("[[items]]")
+    extra = '\n[[items]]\nid = "third"\ntitle = "Third"\nkind = "comment"\nrecommendation = "r"\n'
+    _, lines = _wait_with(capsys, packet, monkeypatch,
+                          {1: lambda: (packet / "review.toml").write_text(head + "[[items]]" + first + extra)})
+    assert "third: item added (pending)" in lines and "second-draft: item removed" in lines
 
 
 def test_wait_rejects_bad_delays_and_bad_packets(capsys, packet, tmp_path, state_dir, monkeypatch):

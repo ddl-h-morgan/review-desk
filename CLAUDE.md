@@ -31,6 +31,7 @@ itself.
 - `registry.py`: `packets.json` under `$REVIEW_DESK_STATE` (default `~/.local/state/review-desk`); packet ids are
   `<last two path parts>-<sha1[:6]>`.
 - `decisions.py`: read, validate and merge one item under a lock; `fsutil.atomic_write_json` does the write.
+- `waitreport.py`: what `wait` compares (per-item state read from the packet's files) and the change lines it prints.
 - `summary.py`: the `status`/`list`/index summaries. `render.py`: HTML; drafts are GitHub-style markdown (markdown-it-py, CommonMark plus tables, strikethrough, linkify), raw HTML off, URL allowlist on every href and src.
 - `server.py`: routes and security checks. `static/page.{css,js}`: the page (served as files so the CSP can forbid inline script).
 - `cli.py`: commands, and `open_browser`. `reload.py`: the `serve --reload` supervisor. `bin/review-desk`: launcher (PEP 723 script). `bin/mutation-check`: the can-it-fail check.

@@ -15,6 +15,7 @@ from pathlib import Path
 from .decisions import DecisionsError
 from .manifest import MANIFEST, SCAFFOLD, ManifestError, load
 from .registry import Registry, RegistryError, state_dir
+from . import waitreport
 from .summary import summarize_dir, summarize_entry, text_report
 
 DEFAULT_PORT = 8791
@@ -160,13 +161,12 @@ def cmd_status(a, reg: Registry):
     print(json.dumps(s, indent=1) if a.json else text_report(s))
 
 
-def _wait_snapshot(directory) -> str:
-    return json.dumps([(i["id"], i["decision"], i["note"]) for i in summarize_dir(directory)["items"]], sort_keys=True)
-
-
 def cmd_wait(a, reg: Registry):
-    """Read-only: poll the packet's decisions until a decision or note changes (or an item is added or removed).
+    """Read-only: poll the packet until a decision or note changes (or an item is added or removed), then print CHANGED,
+    the [id, decision, note] snapshot, and a line per change (see waitreport.report).
 
+    With --on-edits, a manifest-entry or draft-file edit counts too (labelled EDIT in the report). Edits that happened
+    before a change fires are reported either way. Item order is not a change.
     With --settle N, a change only counts once the packet has then been still for N seconds, so a note being typed
     (the page autosaves it) fires once, after the reviewer pauses. Time is counted in slept seconds."""
     for name in ("start", "max"):
@@ -174,26 +174,30 @@ def cmd_wait(a, reg: Registry):
             raise CliError(f"--{name} must be whole seconds >= 1")
     if a.settle < 0:
         raise CliError("--settle must be whole seconds >= 0")
-    base = last = _wait_snapshot(a.dir)  # a bad packet fails here, at once
+    base_s = last_s = waitreport.state(a.dir)  # a bad packet fails here, at once
+    base = last = waitreport.key(base_s, a.on_edits)
     delay, fails, quiet = a.start, 0, 0
     while True:
         step = delay if last == base else min(delay, a.settle)  # while settling, poll at least every settle seconds
         time.sleep(step)
         try:
-            cur = _wait_snapshot(a.dir)
+            cur_s = waitreport.state(a.dir)
             fails = 0
         except (ManifestError, DecisionsError, OSError) as e:  # e.g. review.toml mid-edit; give it a few polls
             fails += 1
             if fails >= 3:
                 raise CliError(f"gave up after 3 failed polls: {e}") from None
-            cur = last
+            cur_s = last_s
+        last_s, cur = cur_s, waitreport.key(cur_s, a.on_edits)
         if cur != last:
             last, quiet = cur, 0
         elif last != base:
             quiet += step
         if last != base and quiet >= a.settle:
             print("CHANGED")
-            print(last)
+            print(json.dumps(waitreport.snapshot(last_s), sort_keys=True))
+            for line in waitreport.report(base_s, last_s):
+                print(line)
             return
         if last == base:
             delay = min(delay * 2, a.max)
@@ -321,7 +325,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--json", action="store_true"); s.set_defaults(fn=cmd_list)
     s = sub.add_parser("status", help="decisions and notes for one packet (or a summary of all registered ones)")
     s.add_argument("dir", nargs="?"); s.add_argument("--json", action="store_true"); port_arg(s); s.set_defaults(fn=cmd_status)
-    s = sub.add_parser("wait", help="block until a packet's decisions or notes change, then print CHANGED and a snapshot "
+    s = sub.add_parser("wait", help="block until a packet's decisions or notes change, then print CHANGED, a snapshot and what changed "
                                     "(read-only; run it in the background to be re-invoked when the reviewer decides)")
     s.add_argument("dir")
     s.add_argument("--start", type=int, default=int(os.environ.get("POLL_START") or 15), help="first poll delay, seconds (15)")
@@ -329,6 +333,9 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--settle", type=int, default=0,
                    help="report a change only after the packet has been still this many seconds, e.g. 30, so a note being "
                         "typed fires once (0: at once)")
+    s.add_argument("--on-edits", action="store_true",
+                   help="also wake on a manifest-entry or draft-file edit; rarely wanted (default: only decisions, notes, items added or "
+                        "removed); edits made before a wake are reported either way")
     s.set_defaults(fn=cmd_wait)
     s = sub.add_parser("new", help="scaffold a review.toml in a directory")
     s.add_argument("dir"); s.add_argument("--title"); s.set_defaults(fn=cmd_new)

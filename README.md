@@ -249,8 +249,11 @@ change to an existing item's title or facts, a removed item, or an edited intro 
    - `undecided`: leave it alone; it's still waiting.
 
    To wait for the reviewer in the same session, run `review-desk wait <dir>` as a background command: it is read-only,
-   and exits printing `CHANGED` and a snapshot when any decision or note changes (or an item is added or removed), so
-   the agent is re-invoked, then reads `status --json` as above. It polls with a backoff from 15 s to 10 min
+   and exits printing `CHANGED`, a snapshot and a line per change (decision from X to Y, note added/changed/cleared with
+   its text, item added/removed, and for each decided item when it was decided and when its draft was last edited) when
+   any decision or note changes (or an item is added or removed), so the agent is re-invoked, then reads `status --json`
+   as above. Manifest and draft-file edits are listed as `EDIT` lines but don't wake it (`--on-edits` makes them, for the rare
+   case that needs it; don't use it by default); reordering the manifest is never a change. It polls with a backoff from 15 s to 10 min
    (`--start`/`--max` seconds, or `POLL_START`/`POLL_MAX`); it exits 1 if the packet is unreadable for 3 polls in a
    row. `--settle N` reports a change only once the packet has been still for N seconds, so a note being typed (the
    page autosaves it) fires once, after the reviewer pauses. `bin/poll-packet <dir>` is the same thing for a symlink on

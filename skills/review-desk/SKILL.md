@@ -73,7 +73,11 @@ down.
 
 If the human is reviewing now and you have nothing else to do, don't ask in chat. Run `review-desk wait <dir>` as a
 background command. It is read-only: it polls the packet and exits, printing `CHANGED` and a snapshot, when any item's
-decision or note changes (or an item is added or removed), so you are re-invoked when the human decides. Polling backs
+decision or note changes (or an item is added or removed), so you are re-invoked when the human decides. After the
+snapshot it prints one line per change (`first-draft: decision pending -> approve`, `note added: <text>`, `item added`,
+`item removed`) and, for each decided item, when it was decided and when its draft was last edited (a draft edited after
+the decision is flagged). Manifest and draft edits made meanwhile are listed as `EDIT ...`; they don't wake `wait`
+(leave it that way), and reordering the manifest is never a change. Polling backs
 off from 15 s to 10 min (`--start` and `--max`, in seconds; or `POLL_START` and `POLL_MAX`). Then read
 `review-desk status <dir> --json` and act only on decided items, as in the workflow. If the human is still partway
 through, run it again. It exits 1 if the packet stays unreadable (no `review.toml`, or an invalid manifest or decisions
