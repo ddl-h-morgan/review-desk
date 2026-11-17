@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Kept for convenience: `poll-packet <dir>` is `review-desk wait <dir>` (see its --help; POLL_START and POLL_MAX still
+# set the default delays). Works through a symlink.
+set -u
+here=$(python3 -I -c 'import os, sys; print(os.path.dirname(os.path.realpath(sys.argv[1])))' "$0") || exit 2
+exec "$here/review-desk" wait "$@"

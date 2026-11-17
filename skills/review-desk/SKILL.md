@@ -1,0 +1,191 @@
+---
+name: review-desk
+description: Use when a batch of drafts needs a human's approval (ticket drafts, PR replies, comments, plans, messages); put them in a review packet instead of asking in chat. The human decides each item (approve, revise, drop) in a local browser page, and you read the decisions back later with `review-desk status --json`.
+---
+
+# review-desk
+
+review-desk is a local approval desk, loopback-only unless the human opts in to sharing on their network (below). You write drafts into a **review packet** (a directory with a
+`review.toml` manifest and markdown files), the human marks each item **approve**, **revise** or **drop** with a note in
+the browser, and the decisions are saved to `review-decisions.json` beside the manifest. You read them back, in this
+session or a later one, and act on them.
+
+Use it instead of asking "should I send these?" in chat when there are several things to approve, or when the review
+can happen later.
+
+## Install (once)
+
+Needs [uv](https://docs.astral.sh/uv/) and Python 3.11 or later.
+
+```sh
+git clone https://github.com/ddl-h-morgan/review-desk.git review-desk
+cd review-desk && uv sync
+uv run --script bin/review-desk --help                    # once, with network: builds the launcher's cached environment
+ln -s "$PWD/bin/review-desk" ~/.local/bin/review-desk     # or: alias review-desk="$PWD/bin/review-desk"
+ln -s "$PWD/bin/poll-packet" ~/.local/bin/poll-packet     # optional: the same as `review-desk wait`
+```
+
+Optional settings (environment variables):
+
+- `REVIEW_DESK_BROWSER`: the browser `open` uses. On macOS, an app name opened in a new window, e.g.
+  `REVIEW_DESK_BROWSER="Firefox"`. Unset: the system default. `--browser NAME` overrides it per call.
+- `REVIEW_DESK_PORT`: the desk port (default 8791). `--port N` overrides it per call.
+- `REVIEW_DESK_STATE`: where the packet registry and desk logs live (default `~/.local/state/review-desk`).
+
+Check it works: `review-desk --help`.
+
+## Is the desk running?
+
+```sh
+curl -s -H 'Host: 127.0.0.1:8791' http://127.0.0.1:8791/api/health    # {"app": "review-desk", ...} if it is
+review-desk serve --background                                          # starts it if it isn't; prints the URL
+```
+
+`review-desk open` also starts the desk if needed. `review-desk status` reads the files directly and works with the desk
+down.
+
+## Workflow
+
+1. **Scaffold the packet:** `review-desk new <dir> --title "<what this batch is>"`. It writes a commented `review.toml`
+   and `example-draft.md`, and refuses to overwrite an existing manifest.
+2. **Write the drafts and fill `review.toml`:** one `[[items]]` entry per thing the human must decide, each with a stable
+   `id` (a slug: `[a-z0-9][a-z0-9-]{0,79}`), a `title`, and usually a `file` (a `.md`, `.markdown` or `.txt` path inside
+   the packet). Put your recommendation in `recommendation`, and anything that changes the decision (overlaps, risks)
+   in `[items.facts]`. Delete `example-draft.md` and its item if you don't use them.
+3. **Register it:** `review-desk add <dir>`. This validates the manifest; fix any error it prints and run it again.
+4. **Open it:** `review-desk open <dir>`. It prints the packet URL (`http://127.0.0.1:<port>/p/<id>/`). Use
+   `--no-browser` if you only want the URL. To point the human at one item (after a revise round, or a question about
+   it), give `review-desk url <dir> --item <id>`: the link scrolls to that card, shows it even if reviewed items are
+   hidden, and highlights it.
+5. **Tell the human** the URL and what the packet holds, then move on. Don't ask for the decisions in chat.
+6. **Later, read the decisions:** `review-desk status <dir> --json`. Each item has `decision` (`approve`, `revise`,
+   `drop`, or `null` for pending) and `note`; `undecided` lists the pending ids, and `orphans` lists decided ids no longer
+   in the manifest.
+7. **Act only on what's decided:**
+   - `approve`: do it, as drafted (plus any small change the note asks for).
+   - `revise`: treat the note as instructions. Edit the draft file; the open page swaps the new text in within a few seconds (no reload, so the human's notes and open drafts are undisturbed). Then clear the revise
+     mark and the note so the item goes back to pending (see "Clear a revise mark and its note" below), and tell the human which items changed so
+     they can decide again. Don't act on a revised item until it's approved.
+   - `drop`: don't do it. Leave the file.
+   - pending (`null`): don't act; it's still waiting.
+
+## Waiting for decisions without chat
+
+If the human is reviewing now and you have nothing else to do, don't ask in chat. Run `review-desk wait <dir>` as a
+background command. It is read-only: it polls the packet and exits, printing `CHANGED` and a snapshot, when any item's
+decision or note changes (or an item is added or removed), so you are re-invoked when the human decides. After the
+snapshot it prints one line per change (`first-draft: decision pending -> approve`, `note added: <text>`, `item added`,
+`item removed`) and, for each decided item, when it was decided and when its draft was last edited (a draft edited after
+the decision is flagged). Manifest and draft edits made meanwhile are listed as `EDIT ...`; they don't wake `wait`
+(leave it that way), and reordering the manifest is never a change. Polling backs
+off from 15 s to 10 min (`--start` and `--max`, in seconds; or `POLL_START` and `POLL_MAX`). Then read
+`review-desk status <dir> --json` and act only on decided items, as in the workflow. If the human is still partway
+through, run it again. It exits 1 if the packet stays unreadable (no `review.toml`, or an invalid manifest or decisions
+file) for 3 polls in a row. (`poll-packet <dir>`, if installed, is the same command.)
+
+The page autosaves a note while it is typed, so a bare `wait` can fire several times for one note, or on a half-written
+one. Pass `--settle 30` to report a change only after the packet has been still for 30 s: a note being typed fires once,
+after the reviewer pauses (a change that is undone in the meantime doesn't fire). Use it on an active review.
+
+`wait` exits on the first change (or if killed), so loop around it: after each exit read `review-desk status <dir> --json`,
+act on decided items only, then start `wait` again in the background. Never end a turn without one armed while items are
+pending. On an active review pass `--start 5 --max 120` (5 s to 120 s between polls; the default backs off to 10 min), and
+wrap it so a killed or empty exit re-arms, run as a background command:
+
+```sh
+until out=$(review-desk wait --start 5 --max 120 --settle 30 <dir> 2>&1) && [ -n "$out" ]; do sleep 5; done; echo "$out"
+```
+
+Don't stop waits with `pkill -f "review-desk wait"` or any pattern kill: other sessions wait on other packets and it kills
+those too. Stop only your own background task by its task id (or the specific PID you started).
+
+## Clear a revise mark and its note
+
+After you have edited a revised item's draft, put it back to pending and clear its note. This is the one write you make to the desk's API,
+and only for `revise` items you have just revised (never to approve, drop or decide anything):
+
+```sh
+curl -s -X PUT http://127.0.0.1:8791/api/p/<packet-id>/items/<item-id> \
+  -H 'X-Review-Desk: 1' -H 'Content-Type: application/json' \
+  -d '{"decision": "", "note": "", "ifDecision": "revise", "ifNote": "<the note exactly as status returned it>"}'
+```
+
+`ifDecision` and `ifNote` make the clear conditional: it applies only while the item is still on `revise` and its note is
+still the text you acted on (copy it from `status --json`, character for character). If the human has decided again since
+(say they approved the revised draft with a note) or added to the note, the desk answers 409, changes nothing, and you
+leave the item alone: it needs a fresh look.
+
+`<packet-id>` is the segment after `/p/` in the packet URL that `review-desk open` prints. Use your `--port` in the URL if the desk
+isn't on 8791. The desk archives the old note itself before clearing it (`review-history.json` beside the manifest) and shows it on
+the card under "Earlier notes", so the human still sees what they asked for. Don't write that file. Check with `review-desk status <dir> --json`
+that the item now shows `decision: null` and an empty `note`.
+
+## Sharing with the local network (only if the human asks)
+
+The desk is loopback-only. If the human wants to review from another device (phone, laptop), the desk must have been
+started with `--share` (or `REVIEW_DESK_SHARE=1`). A desk that is already running is never switched over: say so, and ask
+the human to stop it (find it with `lsof -nP -iTCP:8791 -sTCP:LISTEN`, then `kill <pid>`; use the desk's port) before you
+start one with `review-desk serve --background --share`. Share mode alone exposes
+nothing; the network can reach the desk only while a 4-hour share window is open:
+
+```sh
+review-desk share status --json   # enabled? active? remaining seconds, and the URLs to give the human
+review-desk share on              # open a 4-hour window, or reset a running one to a full 4 hours (bump)
+review-desk share off             # close it
+```
+
+Only do this when the human asked for it, and close the window when they say they're done (it also ends by itself after
+4 hours or when the desk restarts). `share on` and `share off` fail with a message if the desk isn't in share mode.
+Pass on the URLs from `status` (IP URLs, plus a `.local` one only if the desk was started with `--share-mdns`); the human can also hover the page's Share button to see them.
+Anyone on the network can then read the packets and record decisions, so mention that.
+
+## What the human sees of your changes
+
+The desk records changes made outside the page and shows the newest on each card ("Last changed ..."), with the full list
+in a tooltip: when you edit a draft file or the item's entry in `review.toml`, and when you write a decision or note
+through the API (your revise-clear is shown as "Decision set by an agent" and "Note changed by an agent", without the
+note text). This is automatic, so there is nothing for you to call. It does mean the human can see exactly when you
+revised something, so edit the draft once, deliberately, rather than saving it repeatedly. The page marks its own writes
+with `X-Review-Page: 1`; never send that header, so your writes stay labelled as yours.
+
+## After pulling new code (Linux systemd only)
+
+On Linux, if the human runs the desk as a systemd user unit and has set `git config core.hooksPath .githooks`, `git pull`
+restarts the unit (`.githooks/restart-systemd-user-unit`). It does nothing on macOS or without that unit; there, restart
+the desk by hand. A restart ends any share window.
+
+## Packet format
+
+See the review-desk README, "Packet format", for every manifest field (`title`, `intro`, `links`, `appendix`, and per
+item `id`, `title`, `kind`, `recommendation`, `file`, `links`, `facts`). `review-desk new` writes a commented template.
+
+Don't rename an item's `id` once review has started: its decision becomes an orphan and the item shows as pending.
+
+## Link back when an item refers to earlier content
+
+When a recommendation, fact or draft refers to something elsewhere in the packet (another item, a step or question in a
+long draft), link to it so the human can jump there. Don't make them scroll for it (a question like "drop step 4.2?" with no way to
+find step 4.2 is the failure to avoid). Plain markdown links work in `recommendation`, `facts` and draft markdown:
+
+- **Another item:** `#<item-id>`, e.g. `[C-1](#c1-policy-routing)`. Every card has its item id as its HTML id; the page
+  scrolls to it, highlights it and reveals it even when reviewed items are hidden.
+- **A heading inside a draft:** `#<item-id>/<heading-slug>`, e.g. `[step D1.4](#plan-draft/d1-4-plan-mode-tests)` for
+  `### D1.4 Plan-mode tests` in item `plan-draft`. The page reveals the card, opens the draft and scrolls to the
+  heading. Slug rule: the heading text with accents dropped, lowercased, every run of other than `a-z0-9` turned into one
+  `-`, trimmed of `-`, at most 60 characters (`section` if empty); a repeated heading in the same draft gets `-2`, `-3`.
+  So give the target a short, stable heading (`### D1.4 Plan-mode tests`), and keep it unchanged once you've linked to it.
+  A link to a heading that doesn't exist lands on the card with its draft open, so check the slug. Only draft headings
+  get ids; for a spot that isn't a heading, link the nearest heading or quote the text inline.
+- **An item in another packet on the same desk:** `/p/<packet-id>/#<item-id>` (or `.../#<item-id>/<heading-slug>`),
+  e.g. `[C-9](/p/re-1234-x-3f2a1b/#c9-rollout)`. Packet ids are in `review-desk list`; `review-desk url <dir> --item <id>` prints
+  the full URL. Write it relative (starting `/p/`), not with `http://127.0.0.1:...`, so it survives a port change.
+
+## Don't
+
+- Don't edit or create `review-decisions.json`, `review-history.json` or `review-changes.json`. Decisions are the human's.
+- Don't PUT to the desk's API (`/api/p/.../items/...`) on the human's behalf, except `{"decision": "", "note": "", "ifDecision": "revise", "ifNote": "..."}` to clear a revise
+  mark and its note after you have revised that item (above). It exists for the page.
+- Don't treat a pending, dropped or revise-marked item as approved.
+- Don't open a share window on your own initiative, and don't leave one open after the human is done.
+- Don't pattern-kill review-desk waits (`pkill -f`); stop only your own task by id or PID.
+- Don't move or rename a registered packet directory; run `review-desk remove <dir>` and `add` it again if you must.
