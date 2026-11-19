@@ -22,11 +22,14 @@ from urllib.parse import unquote
 
 from markdown_it import MarkdownIt
 
+from .deps import needed_by
 from .fsutil import read_regular
 from .manifest import Item, Link, Packet
+from .summary import waiting_for_reviewer
 
 _SCHEME_RE = re.compile(r"^([a-zA-Z][a-zA-Z0-9+.\-]*):")
 _SAFE_SCHEMES = {"http", "https", "mailto"}
+_TAG_RE = re.compile(r"<[^>]*>")  # on md_inline's output only, where text is already escaped: what is left stays escaped
 
 
 def safe_url(url: str) -> bool:
@@ -191,14 +194,16 @@ def index_page(rows: list[dict]) -> str:
                 continue
             c = r["counts"]
             pills = "".join(f'<span class="pill {k}">{c[k]} {k}</span>' for k in COUNT_KEYS)
+            if r.get("needsReaction"):
+                pills += f'<span class="pill revise">{len(r["needsReaction"])} to re-action</span>'
             touched = e(r["lastTouched"] or "never")
-            lis.append(f'''<li class="packet{' done' if c['pending'] == 0 else ''}">
+            lis.append(f'''<li class="packet{'' if waiting_for_reviewer(r) else ' done'}">
   <a class="ptitle" href="/p/{e(r["id"])}/">{e(r["title"])}</a>
   <div class="pcounts"><strong>{c["total"]} items</strong> {pills}</div>
   <p class="pmeta"><code>{e(display_path(r["path"]))}</code> · last touched <time data-iso="{touched}">{touched}</time></p>
 </li>''')
         listing = '<ul class="packets">' + "\n".join(lis) + "</ul>"
-        n_done = sum(1 for r in rows if not r.get("error") and r["counts"]["pending"] == 0)
+        n_done = sum(1 for r in rows if not r.get("error") and not waiting_for_reviewer(r))
         if n_done:
             listing = (f'<label class="done-toggle"><input type="checkbox" id="done-toggle"> '
                        f'Show packets with nothing pending ({n_done})</label>\n') + listing
@@ -214,10 +219,36 @@ def index_page(rows: list[dict]) -> str:
     return _shell("Review desk", body, ' data-page="index"')
 
 
-def _card(n: int, item: Item, draft_html_: str, pid: str) -> str:
+def _item_refs(ids: list[str], titles: dict[str, str]) -> str:
+    """Links to other cards, each followed by a slot that page.js fills with that item's current decision."""
+    return ", ".join(f'<a href="#{e(i)}">{titles[i]}</a> <span class="dep-state" data-dep-state="{e(i)}"></span>'
+                     for i in ids)
+
+
+# Only on cards with dependencies: the "Waiting on" badge, the "needs re-action" box, and the inline confirm shown before
+# deciding ahead of an open dependency. page.js fills them in.
+DEP_STATUS = '''
+  <p class="dep-badge" data-waiting hidden></p>
+  <div class="reaction" data-reaction hidden>
+    <p data-reaction-text></p>
+    <button type="button" data-reconfirm></button>
+  </div>'''
+DEP_CONFIRM = '''
+  <div class="dep-confirm" data-dep-confirm hidden>
+    <p id="{sid}-dep-confirm" data-dep-confirm-text></p>
+    <button type="button" data-dep-proceed aria-describedby="{sid}-dep-confirm"></button>
+    <button type="button" data-dep-cancel>Cancel</button>
+  </div>'''
+
+
+def _card(n: int, item: Item, draft_html_: str, pid: str, titles: dict[str, str], needed: list[str]) -> str:
     sid = e(item.id)
     facts = [("Recommendation", md_inline(item.recommendation))] if item.recommendation else []
     facts += [(e(k), md_inline(v)) for k, v in item.facts.items()]
+    if item.depends_on:
+        facts.append(("Depends on", _item_refs(item.depends_on, titles)))
+    if needed:
+        facts.append(("Needed by", _item_refs(needed, titles)))
     if item.links:
         facts.append(("Links", _links(item.links)))
     if item.file:
@@ -225,8 +256,11 @@ def _card(n: int, item: Item, draft_html_: str, pid: str) -> str:
         raw_ext = suffix if suffix in (".md", ".markdown") else ""  # a .md URL is what markdown viewer extensions key on
         facts.append(("Draft", f'<code>{e(item.file)}</code> · <a href="/p/{e(pid)}/raw/{sid}{raw_ext}">raw</a>'))
     dl = "".join(f"<div><dt>{k}</dt><dd>{v}</dd></div>" for k, v in facts)
+    deps = f' data-depends-on="{e(" ".join(item.depends_on))}"' if item.depends_on else ""
+    status = DEP_STATUS if item.depends_on else ""
+    confirm = DEP_CONFIRM.format(sid=sid) if item.depends_on else ""
     return f'''
-<article class="card" data-id="{sid}" id="{sid}" data-draft-version="{draft_version(draft_html_)}">
+<article class="card" data-id="{sid}" id="{sid}"{deps} data-draft-version="{draft_version(draft_html_)}">
   <header class="card-head">
     <span class="num">{n}</span>
     <div class="head-text">
@@ -235,13 +269,13 @@ def _card(n: int, item: Item, draft_html_: str, pid: str) -> str:
     </div>
     <span class="status" data-status>Not reviewed</span>
   </header>
-  <dl class="facts">{dl}</dl>
+  <dl class="facts">{dl}</dl>{status}
   <div class="decide" role="group" aria-label="Decision for item {n}">
     <button type="button" data-decision="approve">Approve</button>
     <button type="button" data-decision="revise">Revise</button>
     <button type="button" data-decision="drop">Drop</button>
     <button type="button" data-decision="" class="clear">Clear</button>
-  </div>
+  </div>{confirm}
   <div class="note-slot"><div class="note-box">
     <label class="note-label" for="{sid}-note">Notes for the agent</label>
     <textarea id="{sid}-note" data-note rows="2" placeholder="What to change, who to ask, anything else"></textarea>
@@ -284,6 +318,10 @@ HELP_DIALOG = """<dialog id="help-dialog" class="help" aria-labelledby="help-tit
     <dt>Drop</dt><dd>Don't use it.</dd>
     <dt>Clear</dt><dd>Back to not reviewed.</dd>
   </dl>
+  <p>Some items build on others (<em>Depends on</em> on the card). Deciding one before everything it depends on is
+    approved asks you first and is saved as decided out of order. If one of those items is then decided differently,
+    the card says <em>needs re-action</em>: your decision is kept but unconfirmed, and the agent treats it as pending
+    until you confirm it or decide again.</p>
   <p>Notes save as you type. Decisions save as you click, to <code>review-decisions.json</code> beside the packet's
     <code>review.toml</code>. The agent reads them with <code>review-desk status</code> the next time it checks, so
     tell it to look once you're done. The page only talks to this machine.</p>
@@ -307,7 +345,10 @@ def packet_page(pid: str, packet: Packet) -> str:
 
 def _packet_html(pid: str, packet: Packet, drafts: bool, layout: str) -> str:
     n = len(packet.items)
-    cards = "\n".join(_card(i, it, draft_html(packet, it) if drafts else "", pid) for i, it in enumerate(packet.items, 1))
+    titles = {it.id: _TAG_RE.sub("", md_inline(it.title)) for it in packet.items}  # plain text: links can't nest
+    needed = needed_by(packet.dependencies())
+    cards = "\n".join(_card(i, it, draft_html(packet, it) if drafts else "", pid, titles, needed[it.id])
+                      for i, it in enumerate(packet.items, 1))
     links = f'<p class="plinks">{_links(packet.links)}</p>' if packet.links else ""
     body = f'''<div class="offline" role="alert" id="offline" hidden>
   <strong>Not connected to the review desk: not saving.</strong>
@@ -324,6 +365,7 @@ def _packet_html(pid: str, packet: Packet, drafts: bool, layout: str) -> str:
   <span class="pill revise" id="n-revise">0 to revise</span>
   <span class="pill drop" id="n-drop">0 dropped</span>
   <span class="pill" id="n-open">{n} not reviewed</span>
+  <span class="pill revise" id="n-reaction" hidden>0 to re-action</span>
   <label class="wrap-toggle"><input type="checkbox" id="wrap-toggle"> Wrap long lines</label>
   <label class="wrap-toggle"><input type="checkbox" id="hide-reviewed-toggle"> <span id="hide-reviewed-label">Hide reviewed</span></label>
   <span class="share" id="share" hidden></span>

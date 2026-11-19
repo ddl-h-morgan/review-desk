@@ -114,6 +114,20 @@ body.wrap-lines pre, body.wrap-lines code { white-space: pre-wrap; overflow-wrap
    A card decided during this page view stays for a few seconds (so a mis-click can be undone), then fades out. */
 body.hide-reviewed .card:not(.just-decided)[data-decision="approve"],
 body.hide-reviewed .card:not(.just-decided)[data-decision="drop"] { display: none; }
+/* Dependencies. A card that needs a re-action stays visible under "Hide reviewed": it is waiting on the reviewer again. */
+body.hide-reviewed .card.needs-reaction[data-decision] { display: grid; }
+.card.needs-reaction { border-left: 4px dashed var(--revise); }
+.card.needs-reaction .status { color: var(--revise); }
+.dep-state { color: var(--muted); font-size: 0.9em; }
+.dep-badge { justify-self: start; margin: 0; padding: 2px 10px; border-radius: 999px; border: 1px solid var(--revise);
+  color: var(--revise); font-size: 0.9em; }
+.dep-badge[hidden], .reaction[hidden], .dep-confirm[hidden] { display: none; }
+.reaction, .dep-confirm { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 10px 12px; border-radius: 6px;
+  border: 1px solid var(--revise); background: color-mix(in srgb, var(--revise) 10%, var(--surface)); }
+.reaction p, .dep-confirm p { margin: 0; flex-basis: 100%; }
+.reaction button, .dep-confirm button { font: inherit; padding: 6px 14px; border-radius: 6px; border: 1px solid var(--line);
+  background: var(--bg); color: var(--fg); cursor: pointer; }
+.reaction button:focus-visible, .dep-confirm button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 body { overflow-anchor: none; } /* page.js holds the viewed card in place itself while a card collapses */
 .card.fading { opacity: 0; transition: opacity 0.3s ease, height 0.45s ease, padding 0.45s ease, border-width 0.45s ease, margin 0.45s ease; }
 @media (prefers-reduced-motion: reduce) { .card.fading { transition: none; } }

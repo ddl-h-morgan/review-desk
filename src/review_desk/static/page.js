@@ -215,12 +215,16 @@
 
   function render() {
     if (dead) return;
-    const counts = { approve: 0, revise: 0, drop: 0, open: 0 };
+    const counts = { approve: 0, revise: 0, drop: 0, open: 0, reaction: 0 };
     for (const card of cards) {
       const s = state[card.dataset.id] || {};
       const d = s.decision || "";
       card.dataset.decision = d;
-      card.querySelector("[data-status]").textContent = label[d] ?? d;
+      const again = flagged(s);
+      card.classList.toggle("needs-reaction", again);
+      if (again) counts.reaction++;
+      card.querySelector("[data-status]").textContent = (label[d] ?? d) + (again ? " · needs re-action" : "");
+      renderDeps(card, s);
       for (const b of card.querySelectorAll("button[data-decision]")) {
         b.setAttribute("aria-pressed", String(b.dataset.decision === d && d !== ""));
       }
@@ -235,6 +239,9 @@
     document.getElementById("n-revise").textContent = counts.revise + " to revise";
     document.getElementById("n-drop").textContent = counts.drop + " dropped";
     document.getElementById("n-open").textContent = counts.open + " not reviewed";
+    const reaction = document.getElementById("n-reaction");
+    reaction.textContent = counts.reaction + " to re-action";
+    reaction.hidden = counts.reaction === 0;
     const reviewed = counts.approve + counts.drop;
     document.getElementById("hide-reviewed-label").textContent = reviewed ? `Hide reviewed (${reviewed})` : "Hide reviewed";
   }
@@ -287,8 +294,9 @@
   function bindCard(card) {
     const id = card.dataset.id;
     for (const b of card.querySelectorAll("button[data-decision]")) {
-      listen(b, "click", () => put(id, { decision: b.dataset.decision }));
+      listen(b, "click", () => decide(card, b.dataset.decision));
     }
+    bindDeps(card);
     const note = card.querySelector("[data-note]");
     let t;
     listen(note, "input", () => {
@@ -303,6 +311,75 @@
     listen(note, "input", updateFloat);
   }
   cards.forEach(bindCard);
+
+  // Dependencies: a card's data-depends-on lists the items it builds on (the manifest's depends_on). One is settled when
+  // it is approved and not itself waiting for a re-action. Deciding a card ahead of an open dependency asks first, inline
+  // on the card, and the desk records the decision as out of order. If such a dependency is then decided differently,
+  // the desk flags the card "needs re-action" until it is confirmed or decided again. Text is set with textContent only.
+  const depsOf = card => (card.dataset.dependsOn || "").split(" ").filter(Boolean);
+  function flagged(s) {
+    const n = s?.needsReaction;
+    return Boolean(s?.decision) && (Array.isArray(n) ? n.length > 0 : Boolean(n));
+  }
+  const settled = s => s?.decision === "approve" && !flagged(s);
+  const openDeps = card => depsOf(card).filter(d => !settled(state[d]));
+  const titleOf = id => cards.find(c => c.dataset.id === id)?.querySelector("h2")?.textContent || id;
+  const stateText = s => (label[s?.decision || ""] ?? s.decision) + (flagged(s) ? ", needs re-action" : "");
+  const VERB = { approve: "Approve", revise: "Mark for revision", drop: "Drop" };
+
+  function renderDeps(card, s) {
+    for (const el of card.querySelectorAll("[data-dep-state]")) el.textContent = `(${stateText(state[el.dataset.depState])})`;
+    const waiting = card.querySelector("[data-waiting]");
+    if (!waiting) return; // no dependencies: no badge, re-action box or confirm on this card
+    const open = openDeps(card);
+    waiting.hidden = open.length === 0;
+    waiting.textContent = `Waiting on: ${open.map(titleOf).join(", ")}`;
+    const box = card.querySelector("[data-reaction]");
+    box.hidden = !flagged(s);
+    if (box.hidden) return;
+    const changed = Array.isArray(s.needsReaction) ? s.needsReaction.map(titleOf).join(", ") : "A dependency";
+    box.querySelector("[data-reaction-text]").textContent = `Needs re-action: ${changed} changed after you decided this `
+      + `item ahead of it. "${label[s.decision]}" is kept but unconfirmed: agents treat the item as pending until you `
+      + "confirm it or decide again.";
+    const again = box.querySelector("[data-reconfirm]");
+    again.textContent = `Confirm "${label[s.decision]}"`;
+    again.dataset.decision = s.decision;
+  }
+
+  // A decision click. Clear, a card without dependencies, or one whose dependencies are all settled: saved at once.
+  // Otherwise the card's inline confirm says which dependencies are open, and focus moves to its proceed button.
+  function decide(card, decision) {
+    const ask = card.querySelector("[data-dep-confirm]");
+    const open = decision ? openDeps(card) : [];
+    if (!ask || !open.length) {
+      if (ask) ask.hidden = true;
+      return put(card.dataset.id, { decision });
+    }
+    const names = open.map(d => `${titleOf(d)} (${stateText(state[d])})`).join(", ");
+    ask.querySelector("[data-dep-confirm-text]").textContent = `Not approved yet: ${names}. ${VERB[decision]} this `
+      + `anyway? It is saved as decided out of order, and flagged for you to look at again if ${open.length === 1
+        ? "that item is" : "any of them is"} decided differently.`;
+    ask.dataset.decision = decision;
+    const go = ask.querySelector("[data-dep-proceed]");
+    go.textContent = `${VERB[decision]} anyway`;
+    ask.hidden = false;
+    go.focus();
+  }
+  const decisionButton = (card, d) => [...card.querySelectorAll("button[data-decision]")].find(b => b.dataset.decision === d);
+  function bindDeps(card) {
+    const ask = card.querySelector("[data-dep-confirm]");
+    if (!ask) return;
+    const close = () => { ask.hidden = true; decisionButton(card, ask.dataset.decision)?.focus(); };
+    listen(ask.querySelector("[data-dep-proceed]"), "click", () => { close(); put(card.dataset.id, { decision: ask.dataset.decision }); });
+    listen(ask.querySelector("[data-dep-cancel]"), "click", close);
+    listen(ask, "keydown", ev => { if (ev.key === "Escape") close(); });
+    const again = card.querySelector("[data-reconfirm]");
+    listen(again, "click", () => {
+      const d = again.dataset.decision;
+      put(card.dataset.id, { decision: d }); // the same decision again: the desk clears the flag
+      decisionButton(card, d)?.focus(); // the box is about to hide, with the button that had focus
+    });
+  }
 
   // Floating note: while a note field has focus (and its cursor), its box floats at the bottom of the window if that
   // card's draft is on screen and the note's regular place is not. The slot holds the box's height so nothing jumps.
@@ -397,7 +474,12 @@
       const live = new Map(cards.map(c => [c.dataset.id, c]));
       const freshIds = new Set(fresh.map(c => c.dataset.id));
       const frame = d => ["h1", ".intro", ".evidence"].map(sel => d.querySelector(`main ${sel}`)?.innerHTML ?? "").join("\u0000");
-      const face = c => ["h2", ".kind", ".facts"].map(sel => c.querySelector(sel)?.innerHTML ?? "").join("\u0000");
+      const bare = el => { // render() fills the dependency state slots in .facts, so they are compared empty
+        const copy = el?.cloneNode(true);
+        for (const slot of copy?.querySelectorAll("[data-dep-state]") ?? []) slot.textContent = "";
+        return copy?.innerHTML ?? "";
+      };
+      const face = c => ["h2", ".kind", ".facts"].map(sel => bare(c.querySelector(sel))).join("\u0000");
       let onlyAdded = cards.every(c => freshIds.has(c.dataset.id)) && frame(doc) === frame(document)
         && fresh.every(c => !live.has(c.dataset.id) || face(c) === face(live.get(c.dataset.id)));
       let prev = document.querySelector("main .intro");
@@ -494,10 +576,12 @@
     } catch { /* the next tick tries again */ }
   }
 
-  // External changes (a draft file, the manifest entry, an agent's decision or note write), from review-changes.json. The
-  // newest shows on the card; hovering or focusing it opens the full list (newest first, scrollable). textContent only.
+  // External changes (a draft file, the manifest entry, an agent's decision or note write), and dependency events, from
+  // review-changes.json. The newest shows on the card; hovering or focusing it opens the full list (newest first,
+  // scrollable). textContent only.
   const CHANGE_LABEL = { draft: "Draft edited", manifest: "Item details edited", decision: "Decision set by an agent",
-    note: "Note changed by an agent", "decisions-file": "Decisions file edited" };
+    note: "Note changed by an agent", "decisions-file": "Decisions file edited",
+    "out-of-order": "Decided out of order", "needs-reaction": "Needs re-action", "re-actioned": "Re-actioned" };
   let changesJson = "";
   async function refreshChanges() {
     try {
