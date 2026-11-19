@@ -1,8 +1,8 @@
 """What `review-desk wait` compares and reports: a packet's state at one moment, and the difference between two moments.
 
 The state is read straight from the packet's files (not from review-changes.json, which only a running desk fills in):
-per item, its decision, note and updatedAt, a fingerprint of its manifest entry, and its draft file's content hash and
-last-edit time. Items are keyed by id, so reordering the manifest is no change. Read-only.
+per item, its decision, note and updatedAt, its re-action flag, a fingerprint of its manifest entry, and its draft file's
+content hash and last-edit time. Items are keyed by id, so reordering the manifest is no change. Read-only.
 """
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 
 from . import decisions as dec
+from . import deps
 from .changes import MAX_HASHED, _sha, item_fingerprint, iso_from_epoch
 from .fsutil import read_regular
 from .manifest import load
@@ -28,23 +29,27 @@ def _draft(path: Path | None):
 
 
 def state(directory) -> dict:
-    """{"order": [item ids], "items": {id: {decision, note, updatedAt, manifest, draft, draftEdited}}}.
-    Raises ManifestError or DecisionsError."""
+    """{"order": [item ids], "items": {id: {decision, note, updatedAt, needsReaction, manifest, draft, draftEdited}}}.
+    needsReaction is the dependencies that changed since a decided item was decided out of order ([] when it isn't
+    flagged). Raises ManifestError or DecisionsError."""
     p = load(directory)
     recs = dec.read(p.dir)
     items = {}
     for it in p.items:
         rec = recs.get(it.id) or {}
+        decision = rec.get("decision") or None
         draft, edited = _draft(p.file_path(it))
-        items[it.id] = {"decision": rec.get("decision") or None, "note": rec.get("note") or "",
-                        "updatedAt": rec.get("updatedAt"), "manifest": item_fingerprint(it), "draft": draft,
-                        "draftEdited": edited}
+        items[it.id] = {"decision": decision, "note": rec.get("note") or "", "updatedAt": rec.get("updatedAt"),
+                        "needsReaction": deps.ids(rec.get("needsReaction")) if decision else [],
+                        "manifest": item_fingerprint(it), "draft": draft, "draftEdited": edited}
     return {"order": [it.id for it in p.items], "items": items}
 
 
 def key(s: dict, edits: bool):
-    """What counts as a change: decisions and notes (and items added or removed); with edits, manifest and draft edits too."""
+    """What counts as a change: decisions and notes (and items added or removed), and an item flagged for, or cleared
+    of, a re-action; with edits, manifest and draft edits too."""
     fields = ("decision", "note", "manifest", "draft") if edits else ("decision", "note")
+    fields += ("needsReaction",)
     return {i: tuple(v[f] for f in fields) for i, v in s["items"].items()}
 
 
@@ -62,8 +67,8 @@ def _quote(note: str) -> str:
 
 
 def report(old: dict, new: dict) -> list[str]:
-    """Human-readable lines for what differs between two states. Decision and note changes, items added or removed,
-    and (labelled as edits, never as decisions) manifest-entry and draft-file edits. Each decided item that changed
+    """Human-readable lines for what differs between two states. Decision and note changes, re-action flags set or
+    cleared, items added or removed, and (labelled as edits, never as decisions) manifest-entry and draft-file edits. Each decided item that changed
     also says when it was decided and when its draft was last edited, so 'the decision postdates the draft' is visible."""
     lines = []
     for i in new["order"]:
@@ -79,6 +84,9 @@ def report(old: dict, new: dict) -> list[str]:
                 mine.append("note cleared")
             else:
                 mine.append(f"note {'changed' if o['note'].strip() else 'added'}: {_quote(n['note'])}")
+        if n["needsReaction"] != o["needsReaction"]:
+            mine.append(f"NEEDS RE-ACTION, treat as pending: {', '.join(n['needsReaction'])} changed after it was decided "
+                        "out of order" if n["needsReaction"] else "re-action flag cleared")
         if n["manifest"] != o["manifest"]:
             mine.append("EDIT manifest entry changed (not a decision)")
         if n["draft"] != o["draft"]:

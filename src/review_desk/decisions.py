@@ -4,6 +4,10 @@ The shape is a stable contract: agents and existing packets rely on it, so it do
 at a time under a process-wide lock and replace the file atomically, so two browser tabs editing different items can't clobber each other. Keys for items no longer in the
 manifest are kept (status reports them as orphans). A corrupt file is never overwritten.
 
+Items with dependencies may also carry "outOfOrder" and "needsReaction" (lists of item ids; see deps.py). Only the
+desk sets them, when a write sets a decision: they are not patch fields, so no client can write them directly. A file
+without them reads exactly as before.
+
 Earlier notes live in a second file, review-history.json = {item_id: [{note, decision, at}, ...]} (oldest first, at most
 MAX_HISTORY per item). When one write moves an item off "revise" and clears its note (what an agent does after
 revising), the old note is archived there first, so the page can show what prompted the revision. Editing or deleting a
@@ -21,6 +25,7 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .deps import record_decision
 from .fsutil import NotRegularError, atomic_write_json, read_regular
 
 DECISIONS = "review-decisions.json"
@@ -94,7 +99,9 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
 
 
-def merge_item(packet_dir, item_id: str, patch: dict) -> dict:
+def merge_item(packet_dir, item_id: str, patch: dict, deps: dict | None = None, flagged: list | None = None) -> dict:
+    """deps is the packet's {item id: depends_on} (Packet.dependencies()); a write that sets a decision updates the
+    out-of-order marks with it, and the ids of items it newly flags as needing a re-action are appended to flagged."""
     validate_patch(patch)
     with _lock:
         state = read(packet_dir)
@@ -107,6 +114,10 @@ def merge_item(packet_dir, item_id: str, patch: dict) -> dict:
         rec.setdefault("note", "")
         rec.update({k: v for k, v in patch.items() if not k.startswith("if")})
         rec["updatedAt"] = now_iso()
+        if "decision" in patch:
+            hit = record_decision(state, item_id, old, rec, deps or {})
+            if flagged is not None:
+                flagged.extend(hit)
         left_revise = "decision" in patch and rec["decision"] != "revise"
         if left_revise and old.get("decision") == "revise" and str(old.get("note") or "").strip() and not rec["note"].strip():
             _archive(packet_dir, item_id, old["note"], old.get("updatedAt") or rec["updatedAt"])

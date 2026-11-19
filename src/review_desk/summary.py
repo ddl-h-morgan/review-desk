@@ -4,28 +4,44 @@ from __future__ import annotations
 from pathlib import Path
 
 from . import decisions as dec
+from . import deps
 from .manifest import ManifestError, Packet, load
 from .registry import Entry
 
 
 def summarize(packet: Packet, state: dict) -> dict:
+    """Per item, besides its decision and note: dependsOn, waitingOn (dependencies not approved and confirmed yet),
+    outOfOrder (decided while some were open) and needsReaction (a dependency changed since: the decision is unconfirmed,
+    so treat the item as pending) with changedDependencies (which ones). needsReaction lists those items."""
     counts = {"approve": 0, "revise": 0, "drop": 0, "pending": 0, "total": len(packet.items)}
-    items, undecided = [], []
+    graph = packet.dependencies()
+    items, undecided, needs_reaction = [], [], []
     for it in packet.items:
         rec = state.get(it.id) or {}
         d = rec.get("decision") or None
         counts[d if d in ("approve", "revise", "drop") else "pending"] += 1
         if d is None:
             undecided.append(it.id)
+        flagged = bool(d and rec.get("needsReaction"))
+        if flagged:
+            needs_reaction.append(it.id)
         fp = packet.file_path(it)
         items.append({"id": it.id, "title": it.title, "kind": it.kind, "file": it.file,
                       "fileExists": bool(fp and fp.is_file()), "decision": d, "note": rec.get("note", ""),
-                      "updatedAt": rec.get("updatedAt")})
+                      "updatedAt": rec.get("updatedAt"), "dependsOn": it.depends_on,
+                      "waitingOn": deps.waiting_on(it.id, graph, state), "outOfOrder": bool(d and rec.get("outOfOrder")),
+                      "needsReaction": flagged, "changedDependencies": deps.ids(rec.get("needsReaction")) if flagged else []})
     ids = {it.id for it in packet.items}
     stamps = [r.get("updatedAt") for r in state.values() if isinstance(r, dict) and r.get("updatedAt")]
     return {"title": packet.title, "path": str(packet.dir), "decisionsFile": str(dec.path_for(packet.dir)),
-            "counts": counts, "undecided": undecided, "orphans": sorted(k for k in state if k not in ids),
+            "counts": counts, "undecided": undecided, "needsReaction": needs_reaction,
+            "orphans": sorted(k for k in state if k not in ids),
             "lastTouched": max(stamps) if stamps else None, "items": items}
+
+
+def waiting_for_reviewer(row: dict) -> bool:
+    """A packet row (summarize or summarize_entry) still has work for the reviewer: pending items, or items to re-action."""
+    return bool(row["counts"]["pending"] or row.get("needsReaction"))
 
 
 def summarize_dir(directory) -> dict:
@@ -40,7 +56,8 @@ def summarize_entry(entry: Entry) -> dict:
         if not Path(entry.path).is_dir():
             raise ManifestError(f"directory missing: {entry.path}")
         s = summarize_dir(entry.path)
-        row.update(title=s["title"], counts=s["counts"], lastTouched=s["lastTouched"], undecided=s["undecided"])
+        row.update(title=s["title"], counts=s["counts"], lastTouched=s["lastTouched"], undecided=s["undecided"],
+                   needsReaction=s["needsReaction"])
     except (ManifestError, dec.DecisionsError, OSError) as e:
         row["error"] = str(e)
     return row
@@ -55,11 +72,18 @@ def text_report(s: dict) -> str:
         mark = it["decision"] or "pending"
         missing = "" if it["fileExists"] or not it["file"] else "  [draft file missing]"
         lines.append(f"{mark:<8} {it['id']}  {it['title']}{missing}")
+        if it["needsReaction"]:
+            lines.append(f"         NEEDS RE-ACTION (treat as pending): {', '.join(it['changedDependencies'])} changed "
+                         "after it was decided out of order")
+        elif it["waitingOn"]:
+            lines.append(f"         waiting on: {', '.join(it['waitingOn'])}")
         if it["note"]:
             for i, ln in enumerate(it["note"].splitlines() or [""]):
                 lines.append(("         note: " if i == 0 else "               ") + ln)
     lines.append("")
     lines.append("undecided: " + (", ".join(s["undecided"]) or "none"))
+    if s["needsReaction"]:
+        lines.append("needs re-action (treat as pending): " + ", ".join(s["needsReaction"]))
     if s["orphans"]:
         lines.append("orphans (decided, not in manifest): " + ", ".join(s["orphans"]))
     return "\n".join(lines)

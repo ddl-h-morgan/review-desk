@@ -9,6 +9,10 @@
   note           the note changed through the API without the page
   decisions-file review-decisions.json was edited on disk for this item
 An entry marked "coarse" came from a scan that had not looked for a while, so it may stand for several changes.
+Dependency events (deps.py) are listed whoever made the write, the page included, since they explain the item's state:
+  out-of-order   the item was decided while some of its dependencies were open
+  needs-reaction a dependency's decision changed after the item was decided out of order
+  re-actioned    the item was decided again (or cleared) after being flagged, which clears the flag
 
 Two sources feed it. `Watcher` scans registered packets by content hash (not file events: a hash never misses a net
 change, and a renamed-over file needs no re-arming). A packet is scanned about once a second while a page has it open (the
@@ -37,6 +41,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import decisions as dec
+from .deps import ids
 from .fsutil import NotRegularError, atomic_write_json, read_regular
 from .manifest import ManifestError, load
 
@@ -50,7 +55,7 @@ CLOSED_INTERVAL = 600.0  # and for every other packet
 OPEN_TTL = 15.0  # a packet counts as open this long after the page's last poll (the page polls every 3 s while visible)
 COARSE_AFTER = 5.0  # a scan this long after the previous one can't say how many changes it found
 SETTLE_SECONDS = 0.5  # a file modified this recently may be mid-write (truncated, half written): look again next pass
-KINDS = ("draft", "manifest", "decision", "note", "decisions-file")
+KINDS = ("draft", "manifest", "decision", "note", "decisions-file", "out-of-order", "needs-reaction", "re-actioned")
 LOCK = threading.Lock()
 
 
@@ -126,9 +131,10 @@ def _label(decision) -> str:
     return decision or "not reviewed"
 
 
-def record_write(packet_dir, item_id: str, before, after, external: bool, at: str | None = None) -> None:
+def record_write(packet_dir, item_id: str, before, after, external: bool, at: str | None = None, flagged=()) -> None:
     """After a decision write (call with LOCK held): remember the item's new state so the scan doesn't call it a file
-    edit, and when the write didn't come from the page, list what it changed."""
+    edit, and when the write didn't come from the page, list what it changed. Dependency events are listed either way:
+    for this item, and for each item in `flagged` (the ones the write marked as needing a re-action)."""
     before = before if isinstance(before, dict) else {}
     data = _read_file(packet_dir)
     at = at or now_iso()
@@ -142,6 +148,13 @@ def record_write(packet_dir, item_id: str, before, after, external: bool, at: st
             _add(data, item_id, "decision", at, f"{_label(before.get('decision'))} → {_label(after.get('decision'))}")
         if (before.get("note") or "") != (after.get("note") or ""):
             _add(data, item_id, "note", at, "note cleared" if not (after.get("note") or "").strip() else "note changed")
+    was, now = _label(before.get("decision")), _label(after.get("decision"))
+    if before.get("needsReaction") and not after.get("needsReaction"):
+        _add(data, item_id, "re-actioned", at, f"{now} confirmed" if was == now else f"{was} → {now}")
+    if after.get("outOfOrder") and (was != now or before.get("needsReaction")):
+        _add(data, item_id, "out-of-order", at, f"{now} while waiting on {', '.join(ids(after['outOfOrder']))}")
+    for other in flagged:
+        _add(data, other, "needs-reaction", at, f"{item_id} changed: {was} → {now}")
     atomic_write_json(path_for(packet_dir), data)
 
 

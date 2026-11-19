@@ -9,14 +9,16 @@ Routes (anything else is 404):
   GET /api/p/<pid>/state                 the packet's review-decisions.json
   GET /api/p/<pid>/history               the packet's review-history.json (notes archived when a revision cleared them)
   GET /api/p/<pid>/changes               the packet's review-changes.json items: {item_id: [{at, kind, detail?}]}, oldest first
-                                         (external changes: draft file, manifest entry, agent decision/note writes)
+                                         (external changes: draft file, manifest entry, agent decision/note writes;
+                                         and dependency events: out-of-order decisions, re-action needed and done)
   GET /api/p/<pid>/drafts                {item_id: version} for every item's rendered draft (the page polls this);
                                          X-Layout-Version says whether the manifest-derived page changed; with
                                          X-Static-Version ("<css>.<js>" fingerprints) lets an open page swap in a
                                          changed stylesheet or script without reloading (hot swap)
   GET /api/p/<pid>/drafts/<item_id>      {version, html}: one rendered draft, so the page can swap it in place
   PUT /api/p/<pid>/items/<item_id>       merge {"decision"?, "note"?, "ifDecision"?} into one item
-                                         (409 and no change if ifDecision no longer matches the item's decision)
+                                         (409 and no change if ifDecision no longer matches the item's decision); a
+                                         decision also updates the packet's out-of-order and re-action marks
   GET /api/share                         share mode state: {enabled, active, remaining, seconds, bumpBelow, canControl, urls}
   POST /api/share                        {"action": "on"|"off"|"toggle"}: open, close or toggle the 4-hour share window
                                          (localhost only; 403 unless the desk was started with --share)
@@ -302,9 +304,10 @@ class Handler(BaseHTTPRequestHandler):
                     before = dec.read(p.dir).get(item_id)
                 except dec.DecisionsError:
                     before = None
-                rec = dec.merge_item(p.dir, item_id, patch)
+                flagged: list[str] = []  # items decided out of order on this one that now need a re-action
+                rec = dec.merge_item(p.dir, item_id, patch, p.dependencies(), flagged)
                 try:
-                    changes.record_write(p.dir, item_id, before, rec, external)
+                    changes.record_write(p.dir, item_id, before, rec, external, flagged=flagged)
                 except Exception:  # the change log is derived data: never fail a saved decision over it
                     pass
         except dec.ConflictError as e:  # an ifDecision guard that no longer holds: the item changed under the caller

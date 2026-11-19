@@ -16,7 +16,7 @@ from .decisions import DecisionsError
 from .manifest import MANIFEST, SCAFFOLD, ManifestError, load
 from .registry import Registry, RegistryError, state_dir
 from . import waitreport
-from .summary import summarize_dir, summarize_entry, text_report
+from .summary import summarize_dir, summarize_entry, text_report, waiting_for_reviewer
 
 DEFAULT_PORT = 8791
 PLATFORM = sys.platform  # module attribute so tests can pick a platform
@@ -143,7 +143,7 @@ def cmd_list(a, reg: Registry):
 def cmd_status(a, reg: Registry):
     if a.dir is None:
         rows = [summarize_entry(e) for e in reg.entries()]
-        waiting = sum(1 for r in rows if "error" not in r and r["counts"]["pending"])
+        waiting = sum(1 for r in rows if "error" not in r and waiting_for_reviewer(r))
         if a.json:
             print(json.dumps({"packets": rows, "packetsWithPending": waiting}, indent=1))
         else:
@@ -151,7 +151,8 @@ def cmd_status(a, reg: Registry):
                 if "error" in r:
                     print(f"ERROR    {r['id']}  {r['error']}")
                 else:
-                    print(f"{r['counts']['pending']:>3} pending  {r['id']}  {r['title']}")
+                    again = f" (+{len(r['needsReaction'])} to re-action)" if r["needsReaction"] else ""
+                    print(f"{r['counts']['pending']:>3} pending  {r['id']}  {r['title']}{again}")
             print(f"{waiting} packet(s) with pending items")
         return
     s = summarize_dir(a.dir)
@@ -162,7 +163,8 @@ def cmd_status(a, reg: Registry):
 
 
 def cmd_wait(a, reg: Registry):
-    """Read-only: poll the packet until a decision or note changes (or an item is added or removed), then print CHANGED,
+    """Read-only: poll the packet until a decision or note changes (or an item is added or removed, or flagged for or
+    cleared of a re-action), then print CHANGED,
     the [id, decision, note] snapshot, and a line per change (see waitreport.report).
 
     With --on-edits, a manifest-entry or draft-file edit counts too (labelled EDIT in the report). Edits that happened
