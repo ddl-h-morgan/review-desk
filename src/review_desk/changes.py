@@ -11,7 +11,7 @@
 An entry marked "coarse" came from a scan that had not looked for a while, so it may stand for several changes.
 Dependency events (deps.py) are listed whoever made the write, the page included, since they explain the item's state:
   out-of-order   the item was decided while some of its dependencies were open
-  needs-reaction a dependency's decision changed after the item was decided out of order
+  needs-reaction a dependency the decided item relies on changed to something other than approve
   re-actioned    the item was decided again (or cleared) after being flagged, which clears the flag
 
 Two sources feed it. `Watcher` scans registered packets by content hash (not file events: a hash never misses a net

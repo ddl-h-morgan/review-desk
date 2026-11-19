@@ -320,9 +320,11 @@ HELP_DIALOG = """<dialog id="help-dialog" class="help" aria-labelledby="help-tit
     <dt>Clear</dt><dd>Back to not reviewed.</dd>
   </dl>
   <p>Some items build on others (<em>Depends on</em> on the card). Deciding one before everything it depends on is
-    approved asks you first and is saved as decided out of order. If one of those items is then decided differently,
-    the card says <em>needs re-action</em>: your decision is kept but unconfirmed, and the agent treats it as pending
-    until you confirm it or decide again.</p>
+    approved asks you first and is saved as decided out of order. When such an item is then approved, that is what you
+    assumed: nothing to do. If instead it is marked for revision, dropped or cleared (or an item you decided after
+    approving it stops being approved), the card says <em>needs re-action</em>: your decision is kept but unconfirmed,
+    and the agent treats it as pending until you confirm it or decide again. The flag goes away by itself if that item
+    is approved again.</p>
   <p>Notes save as you type. Decisions save as you click, to <code>review-decisions.json</code> beside the packet's
     <code>review.toml</code>. The agent reads them with <code>review-desk status</code> the next time it checks, so
     tell it to look once you're done. The page only talks to this machine.</p>

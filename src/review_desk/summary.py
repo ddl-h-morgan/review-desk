@@ -12,9 +12,11 @@ from .registry import Entry
 def summarize(packet: Packet, state: dict) -> dict:
     """Per item, besides its decision and note: dependsOn, waitingOn (dependencies not approved and confirmed yet),
     outOfOrder (decided while some were open) and needsReaction (a dependency changed since: the decision is unconfirmed,
-    so treat the item as pending) with changedDependencies (which ones). needsReaction lists those items."""
+    so treat the item as pending) with changedDependencies (which ones). needsReaction lists those items. The flags are
+    the effective ones (deps.effective_state): a changed dependency that is approved and settled again no longer counts."""
     counts = {"approve": 0, "revise": 0, "drop": 0, "pending": 0, "actioned": 0, "total": len(packet.items)}
     graph = packet.dependencies()
+    state = deps.effective_state(state)
     items, undecided, needs_reaction = [], [], []
     for it in packet.items:
         rec = state.get(it.id) or {}
@@ -77,7 +79,7 @@ def text_report(s: dict) -> str:
         lines.append(f"{mark:<8} {it['id']}  {it['title']}{missing}")
         if it["needsReaction"]:
             lines.append(f"         NEEDS RE-ACTION (treat as pending): {', '.join(it['changedDependencies'])} changed "
-                         "after it was decided out of order")
+                         "after it was decided and is not approved now")
         elif it["waitingOn"]:
             lines.append(f"         waiting on: {', '.join(it['waitingOn'])}")
         if it["note"]:

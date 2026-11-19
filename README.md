@@ -192,14 +192,22 @@ when it is approved and not itself waiting for a re-action (below):
   the card: it names the open dependencies and their state, and the decision is saved only if you click
   **Approve anyway** (or **Mark for revision anyway**, **Drop anyway**); **Cancel** or Esc leaves it as it was. The
   desk records it as out of order. Clear never asks.
-- **Needs re-action.** If a dependency is then decided differently (any change of its decision, including an agent
-  clearing a revise mark), every item that was decided out of order on it is flagged **needs re-action**: the decision
-  stays, but the card says it is unconfirmed and which dependency changed, the top bar counts it, and **Hide reviewed**
-  doesn't hide it. **Confirm** (one click, the same decision) or any other decision clears the flag; editing only the
-  note doesn't. Items decided in order aren't flagged.
+- **The dependency is approved.** That is what an early decision assumed: the dependency simply stops counting as open
+  for the items decided ahead of it (it leaves their `outOfOrder`), and nothing is flagged.
+- **Needs re-action.** If a dependency's decision instead changes to anything but approve (revise, drop, or cleared,
+  including an agent clearing a revise mark), every decided item that depends on it is flagged **needs re-action**:
+  those decided out of order on it, and those decided in order after it was approved (the approval they built on is
+  gone). The decision stays, but the card says it is unconfirmed and which dependency changed, the top bar counts it,
+  and **Hide reviewed** doesn't hide it. **Confirm** (one click, the same decision) or any other decision clears the
+  flag; editing only the note doesn't.
+- **A flag lasts only while it applies.** An item counts as flagged only while at least one of the dependencies that
+  changed is not approved (and settled) now. If they all come back to approved, the flag goes away by itself, with no
+  write: `status`, `wait`, the index and the page all read it that way. The stored list is kept as history, and is
+  pruned when the dependency is next approved.
 - **For agents**, `status --json` gives each item `dependsOn`, `waitingOn` (dependencies not done yet), `outOfOrder`,
-  `needsReaction` and `changedDependencies`, and a top-level `needsReaction` list. An item with `needsReaction: true`
-  is pending, whatever its decision says. `wait` wakes when an item is flagged or cleared, and says which.
+  `needsReaction` and `changedDependencies` (the changed dependencies not approved now), and a top-level `needsReaction`
+  list. An item with `needsReaction: true` is pending, whatever its decision says. `wait` wakes when an item is flagged
+  or cleared (by a decision, or because its changed dependencies were approved again), and says which.
 - Each event (decided out of order, re-action needed, re-actioned) is listed under the card's **Last changed** line.
 
 ## Changes made outside the page
@@ -279,8 +287,10 @@ ignored.
 `decision` is `approve`, `revise`, `drop`, or `""` (cleared, counts as pending). This shape is a stable contract, so
 existing decisions files keep working. Ids that leave the manifest keep their records and show up as `orphans` in `status`.
 An item with [dependencies](#dependencies-between-items) may also carry `"outOfOrder": ["plan"]` (the dependencies
-still open when it was decided) and `"needsReaction": ["plan"]` (those decided differently since). The desk sets and
-clears both when a decision is written; no client can write them, and files without them read as before.
+still open when it was decided, minus any approved since) and `"needsReaction": ["plan"]` (those that changed to
+something other than approve since). The desk sets and clears both when a decision is written; no client can write
+them, and files without them read as before. Readers use the effective flag: the listed dependencies that are not
+approved and settled now.
 Items you add to the manifest appear on an open page within a few seconds, in place (notes, open drafts and scroll are untouched). A
 change to an existing item's title or facts, a removed item, or an edited intro still shows a "Reload" prompt.
 

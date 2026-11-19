@@ -315,8 +315,10 @@
 
   // Dependencies: a card's data-depends-on lists the items it builds on (the manifest's depends_on). One is settled when
   // it is approved and not itself waiting for a re-action. Deciding a card ahead of an open dependency asks first, inline
-  // on the card, and the desk records the decision as out of order. If such a dependency is then decided differently,
-  // the desk flags the card "needs re-action" until it is confirmed or decided again. Text is set with textContent only.
+  // on the card, and the desk records the decision as out of order. If a dependency then lands on anything but approve
+  // (or leaves approve after the card was decided), the desk flags the card "needs re-action" until it is confirmed or
+  // decided again; the state it serves drops the flag by itself once every changed dependency is approved and settled
+  // again (deps.effective_state). Text is set with textContent only.
   const depsOf = card => (card.dataset.dependsOn || "").split(" ").filter(Boolean);
   function flagged(s) {
     const n = s?.needsReaction;
@@ -338,10 +340,11 @@
     const box = card.querySelector("[data-reaction]");
     box.hidden = !flagged(s);
     if (box.hidden) return;
-    const changed = Array.isArray(s.needsReaction) ? s.needsReaction.map(titleOf).join(", ") : "A dependency";
+    const list = Array.isArray(s.needsReaction) ? s.needsReaction : [];
+    const changed = list.length ? list.map(titleOf).join(", ") : "A dependency";
     box.querySelector("[data-reaction-text]").textContent = `Needs re-action: ${changed} changed after you decided this `
-      + `item ahead of it. "${label[s.decision]}" is kept but unconfirmed: agents treat the item as pending until you `
-      + "confirm it or decide again.";
+      + `item and ${list.length > 1 ? "aren't" : "isn't"} approved now. "${label[s.decision]}" is kept but unconfirmed: `
+      + "agents treat the item as pending until you confirm it or decide again.";
     const again = box.querySelector("[data-reconfirm]");
     again.textContent = `Confirm "${label[s.decision]}"`;
     again.dataset.decision = s.decision;
@@ -359,7 +362,7 @@
     const names = open.map(d => `${titleOf(d)} (${stateText(state[d])})`).join(", ");
     ask.querySelector("[data-dep-confirm-text]").textContent = `Not approved yet: ${names}. ${VERB[decision]} this `
       + `anyway? It is saved as decided out of order, and flagged for you to look at again if ${open.length === 1
-        ? "that item is" : "any of them is"} decided differently.`;
+        ? "that item is" : "any of them is"} then marked for revision, dropped or cleared instead of approved.`;
     ask.dataset.decision = decision;
     const go = ask.querySelector("[data-dep-proceed]");
     go.textContent = `${VERB[decision]} anyway`;

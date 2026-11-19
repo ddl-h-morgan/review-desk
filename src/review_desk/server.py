@@ -6,7 +6,8 @@ Routes (anything else is 404):
   GET /p/<pid>/raw/<item_id>[.md]        an item's draft file as text/plain (only files the manifest names; the optional
                                          .md/.markdown must match the file's own suffix, so markdown viewers see a .md URL)
   GET /api/health                        {"app": "review-desk"}
-  GET /api/p/<pid>/state                 the packet's review-decisions.json
+  GET /api/p/<pid>/state                 the packet's review-decisions.json, with each needsReaction reduced to its
+                                         effective flag (deps.effective_state)
   GET /api/p/<pid>/history               the packet's review-history.json (notes archived when a revision cleared them)
   GET /api/p/<pid>/changes               the packet's review-changes.json items: {item_id: [{at, kind, detail?}]}, oldest first
                                          (external changes: draft file, manifest entry, agent decision/note writes;
@@ -54,6 +55,7 @@ from urllib.parse import urlsplit
 
 from . import changes
 from . import decisions as dec
+from . import deps
 from . import render
 from . import share as sharing
 from .fsutil import read_regular
@@ -248,7 +250,7 @@ class Handler(BaseHTTPRequestHandler):
     def _get_state(self, pid):
         p = self._packet(pid)
         try:
-            self._json(200, dec.read(p.dir))
+            self._json(200, deps.effective_state(dec.read(p.dir)))
         except dec.DecisionsError as e:
             raise HttpError(500, str(e))
 
@@ -301,7 +303,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             with changes.LOCK:  # the scan must not see this write half done and call it a file edit
                 try:
-                    before = dec.read(p.dir).get(item_id)
+                    before = deps.effective_state(dec.read(p.dir)).get(item_id)
                 except dec.DecisionsError:
                     before = None
                 flagged: list[str] = []  # items decided out of order on this one that now need a re-action

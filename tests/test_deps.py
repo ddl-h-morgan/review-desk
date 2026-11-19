@@ -85,8 +85,11 @@ def test_clearing_is_never_out_of_order(pkt):
 
 def test_a_dependency_awaiting_a_re_action_counts_as_open(pkt):
     decide(pkt, "build", "approve")           # out of order: plan is pending
-    decide(pkt, "plan", "approve")            # plan changed: build needs a re-action
+    decide(pkt, "plan", "revise")             # plan changed: build needs a re-action
     assert read(pkt)["build"]["needsReaction"] == ["plan"]
+    assert decide(pkt, "ship", "approve")[0]["outOfOrder"] == ["build", "plan"]
+    # an approved dependency whose flag still applies (its cause isn't an approved item) is open too
+    _write(pkt, {"plan": {"decision": "approve"}, "build": {"decision": "approve", "needsReaction": ["no-such-item"]}})
     assert decide(pkt, "ship", "approve")[0]["outOfOrder"] == ["build"]
 
 
@@ -103,11 +106,15 @@ def test_a_dependency_change_flags_only_items_decided_out_of_order_on_it(pkt):
     assert "ship" not in state  # pending items aren't flagged: they still need a decision anyway
 
 
-def test_items_decided_in_order_are_not_flagged(pkt):
+@pytest.mark.parametrize("to", ["drop", "revise", ""])
+def test_items_decided_in_order_are_flagged_when_the_approval_they_built_on_goes(pkt, to):
     decide(pkt, "plan", "approve")
-    decide(pkt, "build", "approve")
-    assert decide(pkt, "plan", "drop")[1] == []
-    assert "needsReaction" not in read(pkt)["build"]
+    decide(pkt, "build", "drop")
+    decide(pkt, "ship", "approve")            # in order on plan, out of order on build (dropped)
+    assert decide(pkt, "plan", to)[1] == ["build", "ship"]
+    state = read(pkt)
+    assert state["build"]["needsReaction"] == ["plan"] and state["ship"]["needsReaction"] == ["plan"]
+    assert "outOfOrder" not in state["build"] and state["build"]["decision"] == "drop"
 
 
 def test_rewriting_the_same_decision_or_only_the_note_flags_nothing(pkt):
@@ -122,7 +129,7 @@ def test_a_flag_names_each_changed_dependency_once_and_survives_note_edits(pkt):
     decide(pkt, "ship", "approve")            # out of order on build and plan
     assert decide(pkt, "build", "drop")[1] == ["ship"]
     assert decide(pkt, "build", "revise")[1] == []  # already flagged for build
-    assert decide(pkt, "plan", "approve")[1] == ["build", "ship"]  # build too: it was decided before plan
+    assert decide(pkt, "plan", "drop")[1] == ["build", "ship"]  # build too: it was decided before plan
     merge_item(pkt, "ship", {"note": "hm"}, load(pkt).dependencies())
     assert read(pkt)["ship"]["needsReaction"] == ["build", "plan"]
 
@@ -158,7 +165,7 @@ def test_older_decisions_files_load_and_report_no_marks(pkt, capsys):
     s = status(capsys, pkt)
     build = s["items"][1]
     assert build["outOfOrder"] is False and build["needsReaction"] is False and s["needsReaction"] == []
-    assert decide(pkt, "plan", "drop")[1] == []  # build wasn't marked out of order, so nothing to flag
+    assert decide(pkt, "plan", "drop")[1] == ["build"]  # unmarked counts as decided in order: its basis is gone
 
 
 def test_hand_edited_marks_of_the_wrong_type_are_tolerated(pkt, capsys):
@@ -170,9 +177,10 @@ def test_hand_edited_marks_of_the_wrong_type_are_tolerated(pkt, capsys):
     assert read(pkt)["build"]["needsReaction"] == ["plan"]
 
 
-def test_a_cleared_item_with_a_leftover_mark_is_not_flagged(pkt):
+@pytest.mark.parametrize("to", ["approve", "drop"])
+def test_a_cleared_item_with_a_leftover_mark_is_not_flagged(pkt, to):
     (pkt / "review-decisions.json").write_text(json.dumps({"build": {"decision": "", "note": "", "outOfOrder": ["plan"]}}))
-    assert decide(pkt, "plan", "approve")[1] == []
+    assert decide(pkt, "plan", to)[1] == []
 
 
 # ---- status --------------------------------------------------------------------------------------------------------
@@ -189,8 +197,11 @@ def test_status_json_reports_dependencies_and_re_action(pkt, capsys):
     assert items["ship"]["dependsOn"] == ["build", "plan"] and items["ship"]["waitingOn"] == ["build", "plan"]
     assert items["plan"]["outOfOrder"] is False and items["plan"]["needsReaction"] is False
     assert items["aside"]["dependsOn"] == [] and items["aside"]["waitingOn"] == []
+    decide(pkt, "build", "drop")              # build re-decided while plan is open: out of order again
+    decide(pkt, "ship", "approve")
+    decide(pkt, "build", "revise")            # flags ship
     decide(pkt, "plan", "approve")
-    assert status(capsys, pkt)["items"][2]["waitingOn"] == ["build"]  # plan is settled; build still needs a re-action
+    assert status(capsys, pkt)["items"][2]["waitingOn"] == ["build"]  # plan is settled; build is revise
 
 
 def test_a_cleared_item_is_not_reported_as_needing_a_re_action(pkt, capsys):
@@ -205,7 +216,7 @@ def test_status_text_says_what_needs_a_re_action(pkt, capsys):
     decide(pkt, "plan", "revise")
     assert main(["status", str(pkt)]) == 0
     out = capsys.readouterr().out
-    assert "NEEDS RE-ACTION (treat as pending): plan changed after it was decided out of order" in out
+    assert "NEEDS RE-ACTION (treat as pending): plan changed after it was decided and is not approved now" in out
     assert "waiting on: build, plan" in out
     assert "needs re-action (treat as pending): build" in out
 
@@ -219,7 +230,8 @@ def test_status_of_all_packets_counts_a_re_action_as_waiting(pkt, capsys, state_
     assert json.loads(capsys.readouterr().out)["packetsWithPending"] == 0
     decide(pkt, "plan", "revise")  # plan reopens; build and ship were decided in order, so nothing is flagged
     decide(pkt, "build", "approve")  # re-decided while plan is open: out of order
-    decide(pkt, "plan", "approve")   # flags build
+    decide(pkt, "plan", "drop")      # flags build and ship
+    decide(pkt, "ship", "approve")   # ship re-confirmed
     main(["status", "--json"])
     rows = json.loads(capsys.readouterr().out)
     assert rows["packets"][0]["needsReaction"] == ["build"] and rows["packets"][0]["counts"]["pending"] == 0
@@ -252,7 +264,7 @@ def test_a_re_action_flag_alone_is_a_change_for_wait(pkt, edits):
     off = waitreport.state(pkt)
     assert waitreport.key(on, edits) != waitreport.key(off, edits)
     assert waitreport.report(off, on) == [
-        "build: NEEDS RE-ACTION, treat as pending: plan changed after it was decided out of order",
+        "build: NEEDS RE-ACTION, treat as pending: plan changed after it was decided and is not approved now",
         f"build:   decided {flagged['build']['updatedAt']}; draft last edited n/a"]
     assert waitreport.report(on, off)[0] == "build: re-action flag cleared"
 
@@ -271,7 +283,7 @@ def test_wait_wakes_when_an_item_is_flagged(pkt, capsys, monkeypatch, state_dir)
     assert main(["wait", str(pkt), "--start", "1"]) == 0
     out = capsys.readouterr().out.splitlines()
     assert out[0] == "CHANGED" and ["build", "approve", ""] in json.loads(out[1])  # the snapshot keeps its shape
-    assert "build: NEEDS RE-ACTION, treat as pending: plan changed after it was decided out of order" in out
+    assert "build: NEEDS RE-ACTION, treat as pending: plan changed after it was decided and is not approved now" in out
 
 
 def test_a_pending_item_has_no_flag_for_wait(pkt):
@@ -339,3 +351,146 @@ def test_clients_cannot_write_the_marks(ddesk, pkt, field):
     code, _, body = ddesk.put_item(ddesk.pid, "build", {"note": "x", field: []})
     assert code == 400 and field in json.loads(body)["error"]
     assert read(pkt)["build"]["outOfOrder"] == ["plan"]
+
+
+# ---- settling: a dependency approved after the items that rely on it ------------------------------------------------
+
+def test_approving_a_pending_dependency_settles_items_decided_ahead_of_it_without_flagging(pkt, capsys):
+    decide(pkt, "build", "revise")            # out of order on plan
+    decide(pkt, "ship", "drop")               # out of order on build and plan
+    rec, flagged = decide(pkt, "plan", "approve")
+    assert flagged == [] and "outOfOrder" not in rec
+    state = read(pkt)
+    assert "needsReaction" not in state["build"] and "needsReaction" not in state["ship"]
+    assert "outOfOrder" not in state["build"]  # plan is approved: nothing left open
+    assert state["ship"]["outOfOrder"] == ["build"]  # build is still listed, plan is gone
+    s = status(capsys, pkt)
+    assert s["needsReaction"] == [] and s["items"][1]["outOfOrder"] is False and s["items"][2]["outOfOrder"] is True
+
+
+@pytest.mark.parametrize("dep_from", ["revise", "drop"])
+def test_approving_a_revised_or_dropped_dependency_settles_too(pkt, dep_from):
+    decide(pkt, "plan", dep_from)
+    decide(pkt, "build", "approve")
+    assert decide(pkt, "plan", "approve")[1] == []
+    assert set(read(pkt)["build"]) == {"decision", "note", "updatedAt"}
+
+
+@pytest.mark.parametrize("to", ["drop", "revise", ""])
+def test_a_dependency_leaving_approve_flags_items_settled_by_it(pkt, to):
+    decide(pkt, "build", "approve")           # out of order
+    decide(pkt, "plan", "approve")            # settles build
+    rec, flagged = decide(pkt, "plan", to)
+    assert flagged == ["build"] and read(pkt)["build"]["needsReaction"] == ["plan"]
+
+
+def test_re_confirming_a_flagged_approval_settles_its_dependents(pkt):
+    decide(pkt, "build", "approve")           # out of order on plan
+    decide(pkt, "plan", "revise")             # flags build
+    decide(pkt, "ship", "approve")            # out of order on build (flagged) and plan
+    assert read(pkt)["ship"]["outOfOrder"] == ["build", "plan"]
+    assert decide(pkt, "build", "approve")[1] == []  # build confirmed (same decision): settled again
+    ship = read(pkt)["ship"]
+    assert ship["outOfOrder"] == ["plan"] and "needsReaction" not in ship
+
+
+def test_the_agents_revise_clear_then_approval_round_trip(ddesk, pkt):
+    ddesk.put_item(ddesk.pid, "plan", {"decision": "approve"}, headers=PAGE)
+    ddesk.put_item(ddesk.pid, "build", {"decision": "approve"}, headers=PAGE)  # in order
+    ddesk.put_item(ddesk.pid, "plan", {"decision": "revise", "note": "split it"}, headers=PAGE)
+    ddesk.put_item(ddesk.pid, "plan", {"decision": "", "note": "", "ifDecision": "revise", "ifNote": "split it"})
+    assert json.loads(ddesk.get(f"/api/p/{ddesk.pid}/state")[2])["build"]["needsReaction"] == ["plan"]
+    ddesk.put_item(ddesk.pid, "plan", {"decision": "approve"}, headers=PAGE)  # the revised plan approved
+    state = json.loads(ddesk.get(f"/api/p/{ddesk.pid}/state")[2])
+    assert "needsReaction" not in state["build"] and "needsReaction" not in read(pkt)["build"]
+    log = json.loads(ddesk.get(f"/api/p/{ddesk.pid}/changes")[2])
+    assert [(e["kind"], e.get("detail")) for e in log["build"]] == [("needs-reaction", "plan changed: approve → revise")]
+
+
+# ---- the effective flag: stored flags whose dependencies are approved again read as cleared --------------------------
+
+STALE = {  # what earlier versions left behind: plan approved after build and ship, and both flagged for it
+    "plan": {"decision": "approve", "note": "", "updatedAt": "2026-01-01T00:00:03.000Z"},
+    "build": {"decision": "approve", "note": "", "outOfOrder": ["plan"], "needsReaction": ["plan"],
+              "updatedAt": "2026-01-01T00:00:01.000Z"},
+    "ship": {"decision": "approve", "note": "", "outOfOrder": ["build", "plan"], "needsReaction": ["plan"],
+             "updatedAt": "2026-01-01T00:00:02.000Z"},
+}
+
+
+def test_a_stored_flag_on_an_approved_dependency_reads_as_cleared(pkt, capsys, state_dir):
+    _write(pkt, STALE)
+    s = status(capsys, pkt)
+    assert s["needsReaction"] == []
+    assert [(i["needsReaction"], i["changedDependencies"]) for i in s["items"][1:3]] == [(False, []), (False, [])]
+    assert waitreport.state(pkt)["items"]["build"]["needsReaction"] == []
+    main(["add", str(pkt)])
+    capsys.readouterr()
+    main(["status", "--json"])
+    rows = json.loads(capsys.readouterr().out)
+    assert rows["packets"][0]["needsReaction"] == [] and rows["packetsWithPending"] == 1  # aside is still pending
+    assert read(pkt) == STALE  # derived on read: nothing is written
+
+
+def test_the_desk_serves_the_effective_flag(ddesk, pkt):
+    _write(pkt, STALE)
+    state = json.loads(ddesk.get(f"/api/p/{ddesk.pid}/state")[2])
+    assert "needsReaction" not in state["build"] and state["build"]["outOfOrder"] == ["plan"]
+    # re-deciding an item whose stored flag no longer applies isn't logged as a re-action
+    ddesk.put_item(ddesk.pid, "build", {"decision": "approve"}, headers=PAGE)
+    assert "build" not in json.loads(ddesk.get(f"/api/p/{ddesk.pid}/changes")[2])
+
+
+def test_a_dependency_with_a_stale_stored_flag_counts_as_settled(pkt):
+    _write(pkt, STALE)
+    assert "outOfOrder" not in decide(pkt, "ship", "drop")[0]
+
+
+def test_a_stale_stored_flag_does_not_hide_the_next_change(pkt):
+    _write(pkt, STALE)
+    assert decide(pkt, "plan", "drop")[1] == ["build", "ship"]
+    assert read(pkt)["ship"]["needsReaction"] == ["plan"]
+
+
+def test_a_flag_keeps_only_the_dependencies_still_open(pkt, capsys):
+    _write(pkt, {"plan": {"decision": "revise"}, "build": {"decision": "approve"},
+                 "ship": {"decision": "drop", "needsReaction": ["build", "plan"]}})
+    ship = status(capsys, pkt)["items"][2]
+    assert ship["needsReaction"] is True and ship["changedDependencies"] == ["plan"]
+
+
+def test_a_chain_of_flags_settles_together_and_holds_together():
+    from review_desk.deps import effective_state
+    chain = {"ship": {"decision": "drop", "needsReaction": ["build"]},  # dependents first: one pass isn't enough
+             "build": {"decision": "approve", "needsReaction": ["plan"]}, "plan": {"decision": "approve"}}
+    eff = effective_state(chain)
+    assert "needsReaction" not in eff["build"] and "needsReaction" not in eff["ship"]
+    assert chain["build"]["needsReaction"] == ["plan"]  # the input is untouched
+    chain["plan"]["decision"] = "revise"
+    eff = effective_state(chain)
+    assert eff["build"]["needsReaction"] == ["plan"] and eff["ship"]["needsReaction"] == ["build"]
+    loop = {"a": {"decision": "approve", "needsReaction": ["b"]}, "b": {"decision": "approve", "needsReaction": ["a"]}}
+    assert effective_state(loop) == loop  # a hand-made cycle of flags stays flagged
+    odd = {"a": {"decision": "approve", "needsReaction": [1, "plan"]}, "plan": {"decision": "approve"}, "x": 3}
+    assert effective_state(odd) == {"a": {"decision": "approve", "needsReaction": [1]}, "plan": {"decision": "approve"}, "x": 3}
+
+
+def test_wait_wakes_when_a_flag_settles(pkt, capsys, monkeypatch, state_dir):
+    decide(pkt, "build", "approve")
+    decide(pkt, "plan", "revise")             # build flagged
+    before = waitreport.state(pkt)
+    sleeps = []
+
+    def sleep(n):
+        sleeps.append(n)
+        assert len(sleeps) < 10, "never noticed the flag settle"
+        if len(sleeps) == 2:
+            data = read(pkt)
+            data["plan"]["decision"] = "approve"  # as an older desk wrote it: build's stored flag stays
+            _write(pkt, data)
+    monkeypatch.setattr("review_desk.cli.time.sleep", sleep)
+    assert main(["wait", str(pkt), "--start", "1"]) == 0
+    out = capsys.readouterr().out.splitlines()
+    assert out[0] == "CHANGED" and "build: re-action flag cleared" in out
+    after = waitreport.state(pkt)
+    assert after["items"]["build"]["needsReaction"] == [] and before["items"]["build"]["needsReaction"] == ["plan"]

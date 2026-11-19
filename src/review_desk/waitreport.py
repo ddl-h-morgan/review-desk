@@ -30,10 +30,11 @@ def _draft(path: Path | None):
 
 def state(directory) -> dict:
     """{"order": [item ids], "items": {id: {decision, note, updatedAt, needsReaction, manifest, draft, draftEdited}}}.
-    needsReaction is the dependencies that changed since a decided item was decided out of order ([] when it isn't
-    flagged). Raises ManifestError or DecisionsError."""
+    needsReaction is the item's effective flag (deps.effective_state): the dependencies that changed since a decided item
+    was decided and aren't approved now ([] when it isn't flagged), so a flag that settles is a change too. Raises
+    ManifestError or DecisionsError."""
     p = load(directory)
-    recs = dec.read(p.dir)
+    recs = deps.effective_state(dec.read(p.dir))
     items = {}
     for it in p.items:
         rec = recs.get(it.id) or {}
@@ -86,7 +87,7 @@ def report(old: dict, new: dict) -> list[str]:
                 mine.append(f"note {'changed' if o['note'].strip() else 'added'}: {_quote(n['note'])}")
         if n["needsReaction"] != o["needsReaction"]:
             mine.append(f"NEEDS RE-ACTION, treat as pending: {', '.join(n['needsReaction'])} changed after it was decided "
-                        "out of order" if n["needsReaction"] else "re-action flag cleared")
+                        "and is not approved now" if n["needsReaction"] else "re-action flag cleared")
         if n["manifest"] != o["manifest"]:
             mine.append("EDIT manifest entry changed (not a decision)")
         if n["draft"] != o["draft"]:

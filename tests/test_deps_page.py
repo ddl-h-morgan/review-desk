@@ -162,7 +162,8 @@ def test_deciding_ahead_of_an_open_dependency_asks_first(decision, verb):
     assert got["before"] == {
         "puts": 0, "hidden": False, "go": f"{verb} anyway", "focus": "proceed",
         "text": f"Not approved yet: Build (Not reviewed), Plan (Revise). {verb} this anyway? It is saved as decided out "
-                "of order, and flagged for you to look at again if any of them is decided differently."}
+                "of order, and flagged for you to look at again if any of them is then marked for revision, dropped or "
+                "cleared instead of approved."}
     assert got["after"] == {"puts": [["ship", {"decision": decision}]], "hidden": True, "focus": f"button:{decision}"}
 
 
@@ -175,7 +176,8 @@ def test_cancelling_the_confirm_saves_nothing_and_returns_focus(how):
       out.text = p.askText.textContent;
       {how};
       out.r = {{ puts, hidden: p.ask.hidden, focus: focused.name }};""")
-    assert got["text"].endswith("flagged for you to look at again if that item is decided differently.")
+    assert got["text"].endswith("flagged for you to look at again if that item is then marked for revision, dropped "
+                                "or cleared instead of approved.")
     assert got["r"] == {"puts": [], "hidden": True, "focus": "button:approve"}
 
 
@@ -236,11 +238,21 @@ def test_a_flagged_card_explains_and_confirms_in_one_click():
       out.puts = puts; out.focus = focused.name;
       api.renderDeps(card("build"), { decision: "drop" });
       out.after = p.box.hidden;""")
-    assert got["box"] == [False, 'Needs re-action: Plan changed after you decided this item ahead of it. "Dropped" is '
-                                 "kept but unconfirmed: agents treat the item as pending until you confirm it or decide again.",
+    assert got["box"] == [False, 'Needs re-action: Plan changed after you decided this item and isn\'t approved now. '
+                                 '"Dropped" is kept but unconfirmed: agents treat the item as pending until you confirm '
+                                 "it or decide again.",
                           'Confirm "Dropped"']
     assert got["puts"] == [["build", {"decision": "drop"}]] and got["focus"] == "button:drop"
     assert got["after"] is True
+
+
+@needs_node
+def test_a_card_flagged_by_two_dependencies_names_both():
+    got = _page({"plan": {"decision": "drop"}, "build": {"decision": "revise"},
+                 "ship": {"decision": "approve", "needsReaction": ["build", "plan"]}}, """
+      api.renderDeps(card("ship"), state.ship);
+      out.text = card("ship").p.text.textContent;""")
+    assert got["text"].startswith("Needs re-action: Build, Plan changed after you decided this item and aren't approved now.")
 
 
 @needs_node

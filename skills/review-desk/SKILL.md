@@ -55,7 +55,7 @@ down.
    another is approved (tasks after the plan they implement, a reply after the design it cites), add
    `depends_on = ["<that item's id>"]`: ids of other items in the same packet, no self-reference, no cycles. The human
    then sees the dependency on the card, is asked before deciding out of order, and is asked to look again if a
-   dependency changes. For a mere cross-reference, use a `#<item-id>` link instead (below).
+   dependency ends up revised, dropped or cleared rather than approved. For a mere cross-reference, use a `#<item-id>` link instead (below).
 3. **Register it:** `review-desk add <dir>`. This validates the manifest; fix any error it prints and run it again.
 4. **Open it:** `review-desk open <dir>`. It prints the packet URL (`http://127.0.0.1:<port>/p/<id>/`). Use
    `--no-browser` if you only want the URL. To point the human at one item (after a revise round, or a question about
@@ -69,8 +69,9 @@ down.
    open) and `needsReaction` / `changedDependencies`.
 7. **Act only on what's decided, and confirmed:**
    - `needsReaction: true` (or the id is in the top-level `needsReaction` list): **treat it as pending, whatever its
-     `decision` says.** The human decided it ahead of a dependency, and that dependency has been decided differently
-     since; the decision stands only once they confirm it or decide again. Check this before the cases below.
+     `decision` says.** A dependency the human relied on (one they decided ahead of, or one that was approved when they
+     decided) has since been revised, dropped or cleared and isn't approved now; the decision stands only once they
+     confirm it or decide again, or the dependency is approved again (the flag then clears by itself). Check this before the cases below.
    - `approve`: do it, as drafted (plus any small change the note asks for).
    - `revise`: treat the note as instructions. Edit the draft file; the open page swaps the new text in within a few seconds (no reload, so the human's notes and open drafts are undisturbed). Then clear the revise
      mark and the note so the item goes back to pending (see "Clear a revise mark and its note" below), and tell the human which items changed so
@@ -160,8 +161,8 @@ note text). This is automatic, so there is nothing for you to call. It does mean
 revised something, so edit the draft once, deliberately, rather than saving it repeatedly. The page marks its own writes
 with `X-Review-Page: 1`; never send that header, so your writes stay labelled as yours.
 
-Clearing a revise mark is a change of that item's decision: any item the human decided ahead of it (out of order) is
-flagged "needs re-action" by that clear. That is intended (the dependency is being reworked); mention those items when
+Clearing a revise mark is a change of that item's decision: any decided item that depends on it is flagged "needs
+re-action" by that clear, until the human re-decides it or approves the revised dependency. That is intended (the dependency is being reworked); mention those items when
 you tell the human what changed.
 
 ## After pulling new code (Linux systemd only)
@@ -204,7 +205,7 @@ find step 4.2 is the failure to avoid). Plain markdown links work in `recommenda
 - Don't treat a pending, dropped or revise-marked item as approved, or act on any item with `needsReaction: true`
   (whatever its `decision`): it is pending until the human confirms or re-decides it.
 - Don't try to set or clear `outOfOrder` or `needsReaction` yourself (the desk refuses them in a PUT, and the files are
-  off limits): only the human's decision clears a flag. Don't re-PUT a decision to "confirm" it for them.
+  off limits): a flag clears only when the human decides the item again, or approves the changed dependency again. Don't re-PUT a decision to "confirm" it for them.
 - Don't use `depends_on` for loose cross-references (link `#<item-id>` instead), and don't add a dependency to an item
   the human has already decided without saying so: it changes how that card behaves.
 - Don't open a share window on your own initiative, and don't leave one open after the human is done.
