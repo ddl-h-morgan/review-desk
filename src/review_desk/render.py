@@ -243,7 +243,8 @@ DEP_CONFIRM = '''
 
 def _card(n: int, item: Item, draft_html_: str, pid: str, titles: dict[str, str], needed: list[str]) -> str:
     sid = e(item.id)
-    facts = [("Recommendation", md_inline(item.recommendation))] if item.recommendation else []
+    facts = [("Actioned", md_inline(item.actioned))] if item.actioned else []
+    facts += [("Recommendation", md_inline(item.recommendation))] if item.recommendation else []
     facts += [(e(k), md_inline(v)) for k, v in item.facts.items()]
     if item.depends_on:
         facts.append(("Depends on", _item_refs(item.depends_on, titles)))
@@ -260,7 +261,7 @@ def _card(n: int, item: Item, draft_html_: str, pid: str, titles: dict[str, str]
     status = DEP_STATUS if item.depends_on else ""
     confirm = DEP_CONFIRM.format(sid=sid) if item.depends_on else ""
     return f'''
-<article class="card" data-id="{sid}" id="{sid}"{deps} data-draft-version="{draft_version(draft_html_)}">
+<article class="card" data-id="{sid}" id="{sid}"{deps}{' data-actioned="1"' if item.actioned else ''} data-draft-version="{draft_version(draft_html_)}">
   <header class="card-head">
     <span class="num">{n}</span>
     <div class="head-text">

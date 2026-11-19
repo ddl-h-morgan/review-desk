@@ -13,14 +13,17 @@ def summarize(packet: Packet, state: dict) -> dict:
     """Per item, besides its decision and note: dependsOn, waitingOn (dependencies not approved and confirmed yet),
     outOfOrder (decided while some were open) and needsReaction (a dependency changed since: the decision is unconfirmed,
     so treat the item as pending) with changedDependencies (which ones). needsReaction lists those items."""
-    counts = {"approve": 0, "revise": 0, "drop": 0, "pending": 0, "total": len(packet.items)}
+    counts = {"approve": 0, "revise": 0, "drop": 0, "pending": 0, "actioned": 0, "total": len(packet.items)}
     graph = packet.dependencies()
     items, undecided, needs_reaction = [], [], []
     for it in packet.items:
         rec = state.get(it.id) or {}
         d = rec.get("decision") or None
-        counts[d if d in ("approve", "revise", "drop") else "pending"] += 1
-        if d is None:
+        if d is None and it.actioned:
+            counts["actioned"] += 1  # dealt with outside the packet: nothing left to decide
+        else:
+            counts[d if d in ("approve", "revise", "drop") else "pending"] += 1
+        if d is None and not it.actioned:
             undecided.append(it.id)
         flagged = bool(d and rec.get("needsReaction"))
         if flagged:
@@ -30,7 +33,7 @@ def summarize(packet: Packet, state: dict) -> dict:
                       "fileExists": bool(fp and fp.is_file()), "decision": d, "note": rec.get("note", ""),
                       "updatedAt": rec.get("updatedAt"), "dependsOn": it.depends_on,
                       "waitingOn": deps.waiting_on(it.id, graph, state), "outOfOrder": bool(d and rec.get("outOfOrder")),
-                      "needsReaction": flagged, "changedDependencies": deps.ids(rec.get("needsReaction")) if flagged else []})
+                      "needsReaction": flagged, "changedDependencies": deps.ids(rec.get("needsReaction")) if flagged else [], "actioned": it.actioned})
     ids = {it.id for it in packet.items}
     stamps = [r.get("updatedAt") for r in state.values() if isinstance(r, dict) and r.get("updatedAt")]
     return {"title": packet.title, "path": str(packet.dir), "decisionsFile": str(dec.path_for(packet.dir)),

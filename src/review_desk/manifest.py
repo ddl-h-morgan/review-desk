@@ -40,6 +40,7 @@ class Item:
     links: list[Link] = field(default_factory=list)
     facts: dict[str, str] = field(default_factory=dict)
     depends_on: list[str] = field(default_factory=list)
+    actioned: str = ""  # dealt with outside the packet (e.g. submitted on GitHub): kept, shown, hidden by "Hide reviewed"
 
 
 @dataclass
@@ -175,7 +176,8 @@ def load(directory) -> Packet:
         items.append(Item(id=iid, title=_str(r, "title", where, required=True), kind=_str(r, "kind", where),
                           recommendation=_str(r, "recommendation", where), file=f,
                           links=_links(r.get("links"), where), facts=dict(facts),
-                          depends_on=_depends_on(r.get("depends_on"), iid, where)))
+                          depends_on=_depends_on(r.get("depends_on"), iid, where),
+                          actioned=_str(r, "actioned", where)))
     _check_dependencies(items)
     return Packet(dir=root, title=title, intro=intro, links=links, appendix=appendix, items=items)
 

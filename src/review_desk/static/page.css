@@ -113,7 +113,8 @@ body.wrap-lines pre, body.wrap-lines code { white-space: pre-wrap; overflow-wrap
 /* "Hide reviewed" (bar toggle, per viewer): approved and dropped cards go; revise stays, it still needs a decision.
    A card decided during this page view stays for a few seconds (so a mis-click can be undone), then fades out. */
 body.hide-reviewed .card:not(.just-decided)[data-decision="approve"],
-body.hide-reviewed .card:not(.just-decided)[data-decision="drop"] { display: none; }
+body.hide-reviewed .card:not(.just-decided)[data-decision="drop"],
+body.hide-reviewed .card:not(.just-decided)[data-actioned="1"] { display: none; } /* actioned outside the packet: kept, hidden like reviewed */
 /* Dependencies. A card that needs a re-action stays visible under "Hide reviewed": it is waiting on the reviewer again. */
 body.hide-reviewed .card.needs-reaction[data-decision] { display: grid; }
 .card.needs-reaction { border-left: 4px dashed var(--revise); }

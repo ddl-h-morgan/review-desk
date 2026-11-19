@@ -20,7 +20,7 @@ def test_status_json(capsys, packet, state_dir):
     assert code == 0
     s = json.loads(out)
     assert s["title"] == "Demo packet" and s["path"] == str(packet.resolve())
-    assert s["counts"] == {"approve": 0, "revise": 1, "drop": 0, "pending": 1, "total": 2}
+    assert s["counts"] == {"approve": 0, "revise": 1, "drop": 0, "pending": 1, "actioned": 0, "total": 2}
     assert s["undecided"] == ["second-draft"]
     first = s["items"][0]
     assert first["id"] == "first-draft" and first["decision"] == "revise" and first["note"] == "shorter title"

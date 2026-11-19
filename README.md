@@ -132,6 +132,7 @@ id = "fix-the-foo"                  # required, stable slug: [a-z0-9][a-z0-9-]{0
 title = "Fix the foo"                   # required (inline markdown)
 kind = "new Task"                       # optional (inline markdown)
 recommendation = "**File** it."         # optional (inline markdown)
+actioned = "Submitted on GitHub."        # optional: dealt with outside the packet. The card stays, shows this, and hides under "Hide reviewed"
 file = "fix-the-foo.md"             # optional: .md/.markdown/.txt, relative to the packet, must stay inside it
 links = ["https://example.com", {label = "PR #1", url = "https://github.com/o/r/pull/1"}]   # optional
 depends_on = ["agree-the-plan"]         # optional: ids of other items in this packet that this one builds on
