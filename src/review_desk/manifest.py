@@ -2,6 +2,7 @@
 
 A packet is any directory holding review.toml. Every path an item names must resolve (symlinks included) inside that
 directory and end in .md or .txt; the server serves item files only through this validated mapping, never by URL path.
+An item's depends_on may name only other items of the same packet, and the dependencies may not form a cycle.
 """
 from __future__ import annotations
 
@@ -10,6 +11,7 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .deps import find_cycle
 from .fsutil import read_regular
 
 MANIFEST = "review.toml"
@@ -37,6 +39,7 @@ class Item:
     file: str | None = None
     links: list[Link] = field(default_factory=list)
     facts: dict[str, str] = field(default_factory=dict)
+    depends_on: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -53,6 +56,10 @@ class Packet:
 
     def file_path(self, item: Item) -> Path | None:
         return _resolve_file(self.dir, item.file, item.id) if item.file else None
+
+    def dependencies(self) -> dict[str, list[str]]:
+        """{item id: the ids it depends on} for every item (empty for an item without depends_on)."""
+        return {i.id: list(i.depends_on) for i in self.items}
 
 
 def slugify(text: str) -> str:
@@ -88,6 +95,33 @@ def _links(raw, where: str) -> list[Link]:
             raise ManifestError(f"{where}: link URLs must start with http://, https:// or mailto: (got {url!r})")
         out.append(Link(label, url))
     return out
+
+
+def _depends_on(raw, iid: str, where: str) -> list[str]:
+    if raw is None:
+        return []
+    if not isinstance(raw, list) or not all(isinstance(x, str) for x in raw):
+        raise ManifestError(f"{where}: 'depends_on' must be a list of item ids")
+    for d in raw:
+        if not ID_RE.match(d):
+            raise ManifestError(f"{where}: 'depends_on' entries are item ids matching {ID_RE.pattern} (got {d!r})")
+        if d == iid:
+            raise ManifestError(f"{where}: an item can't depend on itself")
+    if len(set(raw)) != len(raw):
+        raise ManifestError(f"{where}: 'depends_on' lists an id twice")
+    return raw
+
+
+def _check_dependencies(items: list[Item]) -> None:
+    """Runs once every item is read, so an item may depend on one listed after it."""
+    ids = {i.id for i in items}
+    for it in items:
+        unknown = [d for d in it.depends_on if d not in ids]
+        if unknown:
+            raise ManifestError(f"{MANIFEST} item {it.id!r}: 'depends_on' names no item in this packet: {', '.join(unknown)}")
+    cycle = find_cycle({i.id: i.depends_on for i in items})
+    if cycle:
+        raise ManifestError(f"{MANIFEST}: dependency cycle: {' -> '.join(cycle)}")
 
 
 def _resolve_file(root: Path, rel: str, where: str) -> Path:
@@ -140,7 +174,9 @@ def load(directory) -> Packet:
             raise ManifestError(f"{where}: 'facts' must be a table of label = markdown string")
         items.append(Item(id=iid, title=_str(r, "title", where, required=True), kind=_str(r, "kind", where),
                           recommendation=_str(r, "recommendation", where), file=f,
-                          links=_links(r.get("links"), where), facts=dict(facts)))
+                          links=_links(r.get("links"), where), facts=dict(facts),
+                          depends_on=_depends_on(r.get("depends_on"), iid, where)))
+    _check_dependencies(items)
     return Packet(dir=root, title=title, intro=intro, links=links, appendix=appendix, items=items)
 
 

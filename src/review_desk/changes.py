@@ -4,7 +4,7 @@
 
 "External" means not made by the reviewer's page. Each entry has a kind:
   draft          the item's draft file changed on disk (by content: a touch or a same-text save doesn't count)
-  manifest       the item's entry in review.toml changed (title, kind, recommendation, file, links, facts)
+  manifest       the item's entry in review.toml changed (title, kind, recommendation, file, links, facts, depends_on)
   decision       the decision changed through the API without the page (what an agent does)
   note           the note changed through the API without the page
   decisions-file review-decisions.json was edited on disk for this item
@@ -115,9 +115,11 @@ def record_fingerprint(rec) -> str:
 
 
 def item_fingerprint(item) -> str:
-    return _sha(json.dumps({"title": item.title, "kind": item.kind, "recommendation": item.recommendation,
-                            "file": item.file, "links": [[l.label, l.url] for l in item.links],
-                            "facts": item.facts}, sort_keys=True).encode())
+    entry = {"title": item.title, "kind": item.kind, "recommendation": item.recommendation, "file": item.file,
+             "links": [[l.label, l.url] for l in item.links], "facts": item.facts}
+    if item.depends_on:  # only when set, so items without dependencies keep the fingerprints they already had
+        entry["depends_on"] = item.depends_on
+    return _sha(json.dumps(entry, sort_keys=True).encode())
 
 
 def _label(decision) -> str:
