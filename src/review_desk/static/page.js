@@ -275,6 +275,7 @@
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.status);
       state[id] = await r.json();
       writes++;
+      if (patch.decision) unlinkDecided(id); // saved: a decided item's link must not bring it back on reload or focus
       if ("note" in patch) {
         const field = cards.find(c => c.dataset.id === id).querySelector("[data-note]");
         if (field.value === patch.note) delete field.dataset.dirty; // typed more since this save went out: still unsaved
@@ -438,6 +439,18 @@
     target.tabIndex = -1;
     target.focus({ preventScroll: true });
     if (scroll) target.scrollIntoView({ block: "start" });
+  }
+  // Deciding (approve, revise, drop) the item the address bar links to drops the fragment, with replaceState: no new
+  // history entry, no scroll, no hashchange. A reload or a new focus then doesn't jump back to a decided item. Clearing
+  // a decision never puts it back, and deciding any other item leaves the fragment alone.
+  function unlinkDecided(id) {
+    let hashId;
+    try { hashId = decodeURIComponent(location.hash.slice(1)); } catch { return; }
+    if (!hashId || hashId.split("/", 1)[0] !== id) return;
+    history.replaceState(history.state, "", location.pathname + location.search);
+    if (linkedId) linkedId = null;
+    const card = cards.find(c => c.dataset.id === id);
+    if (card) for (const el of [card, ...card.querySelectorAll(".linked")]) el.classList.remove("linked");
   }
   listen(window, "hashchange", () => revealLinked());
   if (!hot) revealLinked(); // a hot swap must not pull the page back to the link

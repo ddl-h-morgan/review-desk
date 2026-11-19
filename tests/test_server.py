@@ -492,6 +492,22 @@ def test_script_follows_item_links(desk):
     assert ".card.linked" in desk.get("/static/page.css")[2].decode()
 
 
+def test_script_drops_the_link_to_a_decided_item(desk):
+    """Pins the page.js pieces that drop #<item-id> once that item is decided (checked by hand in the served script)."""
+    js = desk.get("/static/page.js")[2].decode()
+    # only after the save succeeded, and only for a real decision (Clear sends "", which is falsy)
+    ok = js.index("state[id] = await r.json();")
+    call = js.index("if (patch.decision) unlinkDecided(id);")
+    assert ok < call < js.index("}).catch(e => {", ok)
+    # only the item the fragment names (the part before "/"), compared, never used as a selector
+    assert 'if (!hashId || hashId.split("/", 1)[0] !== id) return;' in js
+    # no history entry, no scroll, no hashchange (which would reveal it again)
+    assert 'history.replaceState(history.state, "", location.pathname + location.search);' in js
+    assert "location.hash =" not in js and "pushState" not in js
+    assert 'for (const el of [card, ...card.querySelectorAll(".linked")]) el.classList.remove("linked");' in js
+    assert "if (linkedId) linkedId = null;" in js
+
+
 def test_history_endpoint_serves_archived_notes(desk):
     assert json.loads(desk.get(f"/api/p/{desk.pid}/history")[2]) == {}
     desk.put_item(desk.pid, "first-draft", {"decision": "revise", "note": "shorter"})
