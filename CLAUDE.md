@@ -8,7 +8,7 @@ itself.
 ## Working rules
 
 - Keep it small and local: stdlib plus `markdown-it-py` (with linkify). No network beyond 127.0.0.1, and no coupling to any hosted service.
-- Don't change the decisions file shape (`{item_id: {decision, note, updatedAt}}`): agents and existing packets rely on it.
+- Don't change the decisions file shape (`{item_id: {decision, note, updatedAt}}`): agents and existing packets rely on it. The only additions are the optional, desk-set `outOfOrder`/`needsReaction` id lists (deps.py); a file without them must keep reading the same.
 - Don't change `slugify`: packet ids (and so their URLs) derive from it.
 - Every security rule in `server.py`'s docstring has a test (`tests/test_server.py`, `tests/test_share.py`, `tests/test_changes.py`). A new rule needs a test, and a mutant in `bin/mutation-check`.
 - Test first, then check the tests can fail: `bin/mutation-check` (green baseline required; it restores every file).
@@ -27,10 +27,11 @@ itself.
 
 ## Layout
 
-- `src/review_desk/manifest.py`: parse and validate `review.toml` (ids, path containment, link schemes), and `slugify`.
+- `src/review_desk/manifest.py`: parse and validate `review.toml` (ids, path containment, link schemes, `depends_on`), and `slugify`.
 - `registry.py`: `packets.json` under `$REVIEW_DESK_STATE` (default `~/.local/state/review-desk`); packet ids are
   `<last two path parts>-<sha1[:6]>`.
 - `decisions.py`: read, validate and merge one item under a lock; `fsutil.atomic_write_json` does the write.
+- `deps.py`: item dependencies (`depends_on`): the cycle check, and the out-of-order / needs-re-action marks that `merge_item` updates when a decision is written.
 - `waitreport.py`: what `wait` compares (per-item state read from the packet's files) and the change lines it prints.
 - `summary.py`: the `status`/`list`/index summaries. `render.py`: HTML; drafts are GitHub-style markdown (markdown-it-py, CommonMark plus tables, strikethrough, linkify), raw HTML off, URL allowlist on every href and src.
 - `server.py`: routes and security checks. `static/page.{css,js}`: the page (served as files so the CSP can forbid inline script).

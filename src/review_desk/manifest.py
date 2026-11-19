@@ -194,6 +194,8 @@ kind = "new Task"
 recommendation = "**File** it."
 file = "example-draft.md"       # markdown, relative to this directory
 # links = ["https://example.com"]
+# depends_on = ["other-item"]   # ids of items in this packet this one builds on: deciding it first asks, and a later
+#                               # change to one of them flags it for another look ("needs re-action")
 # [items.facts]
 # Overlaps = "[issue 1](https://example.com/issues/1)"
 '''

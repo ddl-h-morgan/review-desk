@@ -51,7 +51,11 @@ down.
 2. **Write the drafts and fill `review.toml`:** one `[[items]]` entry per thing the human must decide, each with a stable
    `id` (a slug: `[a-z0-9][a-z0-9-]{0,79}`), a `title`, and usually a `file` (a `.md`, `.markdown` or `.txt` path inside
    the packet). Put your recommendation in `recommendation`, and anything that changes the decision (overlaps, risks)
-   in `[items.facts]`. Delete `example-draft.md` and its item if you don't use them.
+   in `[items.facts]`. Delete `example-draft.md` and its item if you don't use them. If an item only makes sense once
+   another is approved (tasks after the plan they implement, a reply after the design it cites), add
+   `depends_on = ["<that item's id>"]`: ids of other items in the same packet, no self-reference, no cycles. The human
+   then sees the dependency on the card, is asked before deciding out of order, and is asked to look again if a
+   dependency changes. For a mere cross-reference, use a `#<item-id>` link instead (below).
 3. **Register it:** `review-desk add <dir>`. This validates the manifest; fix any error it prints and run it again.
 4. **Open it:** `review-desk open <dir>`. It prints the packet URL (`http://127.0.0.1:<port>/p/<id>/`). Use
    `--no-browser` if you only want the URL. To point the human at one item (after a revise round, or a question about
@@ -59,23 +63,31 @@ down.
    hidden, and highlights it.
 5. **Tell the human** the URL and what the packet holds, then move on. Don't ask for the decisions in chat.
 6. **Later, read the decisions:** `review-desk status <dir> --json`. Each item has `decision` (`approve`, `revise`,
-   `drop`, or `null` for pending) and `note`; `undecided` lists the pending ids, and `orphans` lists decided ids no longer
-   in the manifest.
-7. **Act only on what's decided:**
+   `drop`, or `null` for pending) and `note`; `undecided` lists the pending ids, `needsReaction` lists the ids whose
+   decision is unconfirmed (see below), and `orphans` lists decided ids no longer in the manifest. Items with
+   dependencies also show `dependsOn`, `waitingOn` (dependencies not approved yet), `outOfOrder` (decided while some were
+   open) and `needsReaction` / `changedDependencies`.
+7. **Act only on what's decided, and confirmed:**
+   - `needsReaction: true` (or the id is in the top-level `needsReaction` list): **treat it as pending, whatever its
+     `decision` says.** The human decided it ahead of a dependency, and that dependency has been decided differently
+     since; the decision stands only once they confirm it or decide again. Check this before the cases below.
    - `approve`: do it, as drafted (plus any small change the note asks for).
    - `revise`: treat the note as instructions. Edit the draft file; the open page swaps the new text in within a few seconds (no reload, so the human's notes and open drafts are undisturbed). Then clear the revise
      mark and the note so the item goes back to pending (see "Clear a revise mark and its note" below), and tell the human which items changed so
      they can decide again. Don't act on a revised item until it's approved.
    - `drop`: don't do it. Leave the file.
    - pending (`null`): don't act; it's still waiting.
+   - An approved item with a non-empty `waitingOn` (approved out of order, not flagged): the approval stands, but
+     doing it may still depend on the open items; say so if order matters.
 
 ## Waiting for decisions without chat
 
 If the human is reviewing now and you have nothing else to do, don't ask in chat. Run `review-desk wait <dir>` as a
 background command. It is read-only: it polls the packet and exits, printing `CHANGED` and a snapshot, when any item's
-decision or note changes (or an item is added or removed), so you are re-invoked when the human decides. After the
-snapshot it prints one line per change (`first-draft: decision pending -> approve`, `note added: <text>`, `item added`,
-`item removed`) and, for each decided item, when it was decided and when its draft was last edited (a draft edited after
+decision or note changes (or an item is added or removed, or flagged for or cleared of a re-action), so you are
+re-invoked when the human decides. After the snapshot it prints one line per change (`first-draft: decision pending ->
+approve`, `note added: <text>`, `item added`, `item removed`, `NEEDS RE-ACTION, treat as pending: ...`, `re-action flag
+cleared`; the snapshot itself shows only `[id, decision, note]`, so read `status --json` for the flags) and, for each decided item, when it was decided and when its draft was last edited (a draft edited after
 the decision is flagged). Manifest and draft edits made meanwhile are listed as `EDIT ...`; they don't wake `wait`
 (leave it that way), and reordering the manifest is never a change. Polling backs
 off from 15 s to 10 min (`--start` and `--max`, in seconds; or `POLL_START` and `POLL_MAX`). Then read
@@ -148,6 +160,10 @@ note text). This is automatic, so there is nothing for you to call. It does mean
 revised something, so edit the draft once, deliberately, rather than saving it repeatedly. The page marks its own writes
 with `X-Review-Page: 1`; never send that header, so your writes stay labelled as yours.
 
+Clearing a revise mark is a change of that item's decision: any item the human decided ahead of it (out of order) is
+flagged "needs re-action" by that clear. That is intended (the dependency is being reworked); mention those items when
+you tell the human what changed.
+
 ## After pulling new code (Linux systemd only)
 
 On Linux, if the human runs the desk as a systemd user unit and has set `git config core.hooksPath .githooks`, `git pull`
@@ -157,7 +173,7 @@ the desk by hand. A restart ends any share window.
 ## Packet format
 
 See the review-desk README, "Packet format", for every manifest field (`title`, `intro`, `links`, `appendix`, and per
-item `id`, `title`, `kind`, `recommendation`, `file`, `links`, `facts`). `review-desk new` writes a commented template.
+item `id`, `title`, `kind`, `recommendation`, `file`, `links`, `facts`, `depends_on`). `review-desk new` writes a commented template.
 
 Don't rename an item's `id` once review has started: its decision becomes an orphan and the item shows as pending.
 
@@ -185,7 +201,12 @@ find step 4.2 is the failure to avoid). Plain markdown links work in `recommenda
 - Don't edit or create `review-decisions.json`, `review-history.json` or `review-changes.json`. Decisions are the human's.
 - Don't PUT to the desk's API (`/api/p/.../items/...`) on the human's behalf, except `{"decision": "", "note": "", "ifDecision": "revise", "ifNote": "..."}` to clear a revise
   mark and its note after you have revised that item (above). It exists for the page.
-- Don't treat a pending, dropped or revise-marked item as approved.
+- Don't treat a pending, dropped or revise-marked item as approved, or act on any item with `needsReaction: true`
+  (whatever its `decision`): it is pending until the human confirms or re-decides it.
+- Don't try to set or clear `outOfOrder` or `needsReaction` yourself (the desk refuses them in a PUT, and the files are
+  off limits): only the human's decision clears a flag. Don't re-PUT a decision to "confirm" it for them.
+- Don't use `depends_on` for loose cross-references (link `#<item-id>` instead), and don't add a dependency to an item
+  the human has already decided without saying so: it changes how that card behaves.
 - Don't open a share window on your own initiative, and don't leave one open after the human is done.
 - Don't pattern-kill review-desk waits (`pkill -f`); stop only your own task by id or PID.
 - Don't move or rename a registered packet directory; run `review-desk remove <dir>` and `add` it again if you must.

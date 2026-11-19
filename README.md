@@ -105,8 +105,8 @@ All commands are non-interactive and exit 0 on success, 1 on error (message on s
 | `add <dir>` | Validates the manifest and registers the packet by absolute path. Idempotent. |
 | `remove <dir>` | Unregisters the packet. Its files, decisions included, are untouched. |
 | `list [--json]` | Registered packets, with counts and last-touched time. |
-| `status <dir> [--json]` | Agent-readable summary: counts, each item's decision and note, `undecided` ids, `orphans` (decided ids no longer in the manifest). Reads the files directly, so the desk needn't be running. |
-| `status [--json]` | Without a dir: one line per registered packet, plus how many have pending items. |
+| `status <dir> [--json]` | Agent-readable summary: counts, each item's decision and note, `undecided` ids, `needsReaction` ids (see [Dependencies](#dependencies-between-items)), `orphans` (decided ids no longer in the manifest). Reads the files directly, so the desk needn't be running. |
+| `status [--json]` | Without a dir: one line per registered packet, plus how many have pending items or items to re-action. |
 | `serve [--port N] [--background] [--reload] [--share]` | Runs the desk in the foreground, or with `--background` starts it detached (if not already up), prints the URL and exits. `--share` allows [sharing on your local network](#sharing-on-your-local-network), `--share-mdns` (with it) also accepts this machine's `.local` name. Log: `~/.local/state/review-desk/desk-<port>.log`. |
 | `share [status\|on\|off] [--json] [--port N]` | Needs a desk running with `--share`. `status` (the default) shows whether the network window is open, its time left and URLs; `on` opens a 4-hour window, or resets a running one to a full 4 hours; `off` closes it. |
 | `open [<dir>] [--item ID] [--port N] [--browser NAME] [--no-browser]` | Opens the index, or a packet, in a browser (see [Browser](#browser)), starting the desk first if needed. Registers `<dir>` if it isn't yet. `--no-browser` only prints the URL. `--item ID` links to one card (see `url`). |
@@ -134,6 +134,7 @@ kind = "new Task"                       # optional (inline markdown)
 recommendation = "**File** it."         # optional (inline markdown)
 file = "fix-the-foo.md"             # optional: .md/.markdown/.txt, relative to the packet, must stay inside it
 links = ["https://example.com", {label = "PR #1", url = "https://github.com/o/r/pull/1"}]   # optional
+depends_on = ["agree-the-plan"]         # optional: ids of other items in this packet that this one builds on
 [items.facts]                           # optional extra rows on the card: label = inline markdown
 Overlaps = "[issue 1](https://example.com/issues/1)"
 ```
@@ -174,6 +175,32 @@ the desk restarted; `review-desk serve --reload` does that for you when a `.py` 
 edits to `cli.py` or `reload.py` need `serve --reload` restarted by hand. A desk that is already running is never
 replaced: stop it first, or `--reload` is ignored (the command says so).
 
+### Dependencies between items
+
+`depends_on` lists the items an item builds on: a plan before the tasks that implement it, a design before the PR
+reply that cites it. Every entry must be the id of another item in the same packet (the same slug rule as ids, listed
+once), an item can't depend on itself, and the dependencies can't form a cycle; `add` (and the page) reports any of
+these as a manifest error, a cycle with its path (`dependency cycle: a -> b -> a`). For a plain cross-reference
+that shouldn't affect decisions, link the other card in the text instead (`[the plan](#agree-the-plan)`, above).
+
+On the page, a card lists **Depends on** and **Needed by** as links to those cards, each with that item's current
+decision, and shows **Waiting on: X, Y** while any dependency is not yet approved. A dependency counts as done only
+when it is approved and not itself waiting for a re-action (below):
+
+- **Deciding out of order.** Approving, revising or dropping an item while a dependency isn't done asks first, inline on
+  the card: it names the open dependencies and their state, and the decision is saved only if you click
+  **Approve anyway** (or **Mark for revision anyway**, **Drop anyway**); **Cancel** or Esc leaves it as it was. The
+  desk records it as out of order. Clear never asks.
+- **Needs re-action.** If a dependency is then decided differently (any change of its decision, including an agent
+  clearing a revise mark), every item that was decided out of order on it is flagged **needs re-action**: the decision
+  stays, but the card says it is unconfirmed and which dependency changed, the top bar counts it, and **Hide reviewed**
+  doesn't hide it. **Confirm** (one click, the same decision) or any other decision clears the flag; editing only the
+  note doesn't. Items decided in order aren't flagged.
+- **For agents**, `status --json` gives each item `dependsOn`, `waitingOn` (dependencies not done yet), `outOfOrder`,
+  `needsReaction` and `changedDependencies`, and a top-level `needsReaction` list. An item with `needsReaction: true`
+  is pending, whatever its decision says. `wait` wakes when an item is flagged or cleared, and says which.
+- Each event (decided out of order, re-action needed, re-actioned) is listed under the card's **Last changed** line.
+
 ## Changes made outside the page
 
 Each card shows **Last changed <time> (5 min ago) · <what>** when something other than your own clicks has changed that
@@ -183,9 +210,10 @@ list, newest first, in a scrollable box, each entry with its own "ago". Each ent
 | Label | What happened |
 |---|---|
 | Draft edited | The item's draft file changed on disk (compared by content: a save with the same text doesn't count). |
-| Item details edited | The item's entry in `review.toml` changed (title, kind, recommendation, file, links, facts). Edits to the packet's intro or appendix aren't tied to an item and aren't listed. |
+| Item details edited | The item's entry in `review.toml` changed (title, kind, recommendation, file, links, facts, depends_on). Edits to the packet's intro or appendix aren't tied to an item and aren't listed. |
 | Decision set by an agent / Note changed by an agent | A decision or note was written through the API without the page, which is how an agent clears a revise mark. The entry says what changed (`revise → not reviewed`, `note cleared`), never the note text. |
 | Decisions file edited | `review-decisions.json` was edited on disk for that item. |
+| Decided out of order / Needs re-action / Re-actioned | [Dependency](#dependencies-between-items) events, listed whoever caused them, your own clicks included: the item was decided while some dependencies were open (`approve while waiting on plan`), a dependency was then decided differently (`plan changed: approve → drop`), or the item was decided again, which clears the flag (`approve confirmed`, `approve → drop`). |
 
 The desk records these in `review-changes.json` beside the manifest, so the list survives restarts. It compares content
 hashes rather than watching file events (a hash never misses a net change, and an editor's save-by-rename is no
@@ -249,6 +277,9 @@ ignored.
 
 `decision` is `approve`, `revise`, `drop`, or `""` (cleared, counts as pending). This shape is a stable contract, so
 existing decisions files keep working. Ids that leave the manifest keep their records and show up as `orphans` in `status`.
+An item with [dependencies](#dependencies-between-items) may also carry `"outOfOrder": ["plan"]` (the dependencies
+still open when it was decided) and `"needsReaction": ["plan"]` (those decided differently since). The desk sets and
+clears both when a decision is written; no client can write them, and files without them read as before.
 Items you add to the manifest appear on an open page within a few seconds, in place (notes, open drafts and scroll are untouched). A
 change to an existing item's title or facts, a removed item, or an edited intro still shows a "Reload" prompt.
 
@@ -258,7 +289,8 @@ change to an existing item's title or facts, a removed item, or an edited intro 
 
 1. **Create the packet.** Put the drafts in one directory and write `review.toml` (`review-desk new <dir>` gives a
    template). One item per thing the reviewer must decide. Put your recommendation on the card, and anything that
-   changes the decision (overlapping work, risks) in `facts`.
+   changes the decision (overlapping work, risks) in `facts`. When an item only makes sense once another is approved
+   (tasks after their plan), list that in its `depends_on`.
 2. **`review-desk add <dir>`**, then **`review-desk open <dir>`**, and tell the reviewer it's waiting (the URL is
    printed). Don't ask for the decisions in chat; move on. To point at one item (say, after a revision),
    give `review-desk url <dir> --item <id>` instead.
@@ -266,12 +298,14 @@ change to an existing item's title or facts, a removed item, or an edited intro 
    - `approve`: do it (the click is the approval for that item, but follow your project's own rules for logging it);
    - `revise`: edit the draft per the `note`. The open page swaps the new text in within a few seconds, without a reload. Then clear the mark and note with `PUT {"decision": "", "note": "", "ifDecision": "revise", "ifNote": "<the note you acted on>"}` (see the skill; a 409 means the reviewer decided again or added to the note, so leave it). The desk keeps the old note in `review-history.json` and shows it on the card under "Earlier notes". Say which items changed; they get re-decided;
    - `drop`: don't do it; leave the file;
-   - `undecided`: leave it alone; it's still waiting.
+   - `undecided`: leave it alone; it's still waiting;
+   - `needsReaction` (the list, or `needsReaction: true` on an item): pending, whatever its decision says. A dependency
+     changed after the reviewer decided it, so the decision is unconfirmed until they confirm it or decide again.
 
    To wait for the reviewer in the same session, run `review-desk wait <dir>` as a background command: it is read-only,
    and exits printing `CHANGED`, a snapshot and a line per change (decision from X to Y, note added/changed/cleared with
    its text, item added/removed, and for each decided item when it was decided and when its draft was last edited) when
-   any decision or note changes (or an item is added or removed), so the agent is re-invoked, then reads `status --json`
+   any decision or note changes (or an item is added or removed, or flagged for or cleared of a re-action), so the agent is re-invoked, then reads `status --json`
    as above. Manifest and draft-file edits are listed as `EDIT` lines but don't wake it (`--on-edits` makes them, for the rare
    case that needs it; don't use it by default); reordering the manifest is never a change. It polls with a backoff from 15 s to 10 min
    (`--start`/`--max` seconds, or `POLL_START`/`POLL_MAX`); it exits 1 if the packet is unreadable for 3 polls in a
